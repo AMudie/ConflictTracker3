@@ -1,6 +1,7 @@
 ﻿using Neo4j.Driver;
 using System.Data;
 using System.Text;
+using System.Xml.Linq;
 
 namespace ConflictCommon.Classes.StaticHelpers
 {
@@ -908,6 +909,84 @@ ORDER BY country, year, subkey;
             return raw.ToString();
         }
 
+        public  async Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string cypher, Dictionary<string, object> parameters,string kgName)
+        {
+            await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
+            var results = new List<Dictionary<string, object>>();
+
+
+            var cursor = await session.RunAsync(cypher, parameters);
+
+            while (await cursor.FetchAsync())
+            {
+                var record = cursor.Current;
+                var row = new Dictionary<string, object>();
+
+                foreach (var key in record.Keys)
+                {
+                    row[key] = ConvertValue(record[key]);
+                }
+
+                results.Add(row);
+            }
+
+            return results;
+        }
+
+        #region "Conversion Methods"
+        private object ConvertValue(object value)
+        {
+            switch (value)
+            {
+                case INode node:
+                    return ConvertNode(node);
+
+                case IRelationship rel:
+                    return ConvertRelationship(rel);
+
+                case IPath path:
+                    return ConvertPath(path);
+
+                case IList<object> list:
+                    return list.Select(ConvertValue).ToList();
+
+                default:
+                    return value; // primitives (string, int, double, bool, etc.)
+            }
+        }
+
+        private Dictionary<string, object> ConvertNode(INode node)
+        {
+            return new Dictionary<string, object>
+            {
+                ["id"] = node.Id,
+                ["labels"] = node.Labels.ToList(),
+                ["properties"] = node.Properties.ToDictionary(k => k.Key, v => v.Value)
+            };
+        }
+
+        private Dictionary<string, object> ConvertRelationship(IRelationship rel)
+        {
+            return new Dictionary<string, object>
+            {
+                ["id"] = rel.Id,
+                ["type"] = rel.Type,
+                ["startNodeId"] = rel.StartNodeId,
+                ["endNodeId"] = rel.EndNodeId,
+                ["properties"] = rel.Properties.ToDictionary(k => k.Key, v => v.Value)
+            };
+        }
+
+        private Dictionary<string, object> ConvertPath(IPath path)
+        {
+            return new Dictionary<string, object>
+            {
+                ["nodes"] = path.Nodes.Select(ConvertNode).ToList(),
+                ["relationships"] = path.Relationships.Select(ConvertRelationship).ToList()
+            };
+        }
+
+        #endregion
 
 
     }
