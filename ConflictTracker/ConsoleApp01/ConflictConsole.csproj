@@ -1,0 +1,325 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyTitle>ConflictConsole</AssemblyTitle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="StaticHelpers\AppSettingsHelper.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="appsettings.json" />
+    <None Remove="Resources\ACLED\ACLED East Africa.csv" />
+    <None Remove="Resources\ACLED\Sudan ACLED Fatals.csv" />
+    <None Remove="Resources\CIA\Russia_2019.csv" />
+    <None Remove="Resources\CIA\Russia_2020.csv" />
+    <None Remove="Resources\CIA\Russia_2021.csv" />
+    <None Remove="Resources\CIA\Russia_2022.csv" />
+    <None Remove="Resources\CIA\Russia_2023.csv" />
+    <None Remove="Resources\CIA\Russia_2024.csv" />
+    <None Remove="Resources\CIA\Russia_2025.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2020.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2021.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2022.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2023.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2024.csv" />
+    <None Remove="Resources\CIA\South_Sudan_2025.csv" />
+    <None Remove="Resources\CIA\Sudan_2020.csv" />
+    <None Remove="Resources\CIA\Sudan_2021.csv" />
+    <None Remove="Resources\CIA\Sudan_2022.csv" />
+    <None Remove="Resources\CIA\Sudan_2023.csv" />
+    <None Remove="Resources\CIA\Sudan_2024.csv" />
+    <None Remove="Resources\CIA\Sudan_2025.csv" />
+    <None Remove="Resources\CIA\Ukraine_2019.csv" />
+    <None Remove="Resources\CIA\Ukraine_2020.csv" />
+    <None Remove="Resources\CIA\Ukraine_2021.csv" />
+    <None Remove="Resources\CIA\Ukraine_2022.csv" />
+    <None Remove="Resources\CIA\Ukraine_2023.csv" />
+    <None Remove="Resources\CIA\Ukraine_2024.csv" />
+    <None Remove="Resources\CIA\Ukraine_2025.csv" />
+    <None Remove="Resources\East Africa ACLED Data_2026-06-10.csv" />
+    <None Remove="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.shx" />
+    <None Remove="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.dbf" />
+    <None Remove="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.prj" />
+    <None Remove="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.shp" />
+    <None Remove="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.shx" />
+    <None Remove="Resources\Severity\ACLED Severity.json" />
+    <None Remove="Resources\Sudan ACLED Data_2026-06-19 SUSS.csv" />
+    <None Remove="Resources\Sudan ACLED Top 2000.csv" />
+    <None Remove="Resources\Ukraine ACLED Data_2026-06-19.csv" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\ACLED\ACLED East Africa.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\ACLED\Sudan ACLED Fatals.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2019.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2020.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2021.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2022.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2023.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2024.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Russia_2025.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2020.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2021.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2022.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2023.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2024.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\South_Sudan_2025.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2020.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2021.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2022.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2023.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2024.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Sudan_2025.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2019.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2020.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2021.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2022.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2023.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2024.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\CIA\Ukraine_2025.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Central African Republic\geoBoundaries-CAF-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Chad\geoBoundaries-TCD-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Egypt\geoBoundaries-EGY-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Ethiopia\geoBoundaries-ETH-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Kenya\geoBoundaries-KEN-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Libya\geoBoundaries-LBY-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Somalia\geoBoundaries-SOM-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\South Sudan\geoBoundaries-SSD-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Sudan\geoBoundaries-SDN-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.dbf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.prj">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.shp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GeoBorders\Uganda\geoBoundaries-UGA-ADM0.shx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\Severity\ACLED Severity.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\ACLED\Sudan ACLED Data_2026-06-19 SUSS.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\ACLED\Sudan ACLED Top 2000.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CsvHelper" Version="33.1.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.9" />
+    <PackageReference Include="Neo4j.Driver" Version="6.2.1" />
+    <PackageReference Include="NetTopologySuite.IO" Version="1.14.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ConflictCommon\ConflictCommon.csproj" />
+	<PackageReference Include="System.Text.Encoding.CodePages" Version="*" />
+  </ItemGroup>
+
+</Project>

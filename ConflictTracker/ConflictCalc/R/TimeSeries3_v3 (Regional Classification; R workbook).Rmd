@@ -1,0 +1,200 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+train_df = read.csv("train_df.csv", stringsAsFactors = TRUE)
+test_df = read.csv("test_df.csv", stringsAsFactors = TRUE)
+```
+
+```{r}
+
+target_colname = "Target_ConflictFlag"
+
+target <- target_colname
+cat_features <- c("country", "place")
+
+library(dplyr) #gives the %>% operator
+
+# Convert categorical features to integer encoding
+train_df_lgb <- train_df %>%
+  mutate(across(all_of(cat_features), as.integer))
+
+test_df_lgb <- test_df %>%
+  mutate(across(all_of(cat_features), as.integer))
+
+# Extract labels
+train_label <- train_df_lgb[[target]]
+test_label  <- test_df_lgb[[target]]
+
+# Remove target column from features
+train_matrix <- as.matrix(train_df_lgb %>% select(-all_of(target)))
+test_matrix  <- as.matrix(test_df_lgb %>% select(-all_of(target)))
+
+#Build LightGBM datasets
+dtrain <- lgb.Dataset(
+  data = train_matrix,
+  label = train_label,
+  categorical_feature = which(colnames(train_matrix) %in% cat_features)
+)
+
+dtest <- lgb.Dataset(
+  data = test_matrix,
+  label = test_label,
+  categorical_feature = which(colnames(test_matrix) %in% cat_features)
+)
+
+params <- list(
+  objective = "binary",
+  metric = "auc",
+  boosting = "gbdt",
+  learning_rate = 0.05,
+  num_leaves = 31,
+  feature_fraction = 0.8,
+  bagging_fraction = 0.8,
+  bagging_freq = 5
+)
+
+#Train LightGBM model (binary classification)
+model_lgb <- lgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 500,
+  valids = list(test = dtest),
+  verbose = 1
+)
+
+lgb.save(model_lgb, "model_lgb.txt")
+
+```
+
+# Evaluation of Model
+```{r}
+pred_probs <- predict(model_lgb, test_matrix)
+
+threshold <- 0.5
+pred_classes <- ifelse(pred_probs >= threshold, 1, 0)
+
+# AUC
+auc <- pROC::auc(test_label, pred_probs)
+
+# Accuracy
+accuracy <- mean(pred_classes == test_label)
+
+# Precision
+precision <- sum(pred_classes == 1 & test_label == 1) /
+             sum(pred_classes == 1)
+
+# Recall
+recall <- sum(pred_classes == 1 & test_label == 1) /
+          sum(test_label == 1)
+
+# F1 Score
+f1 <- 2 * (precision * recall) / (precision + recall)
+
+# Confusion Matrix
+conf_matrix <- table(Predicted = pred_classes, Actual = test_label)
+
+cat("AUC:        ", auc, "\n")
+cat("Accuracy:   ", accuracy, "\n")
+cat("Precision:  ", precision, "\n")
+cat("Recall:     ", recall, "\n")
+cat("F1 Score:   ", f1, "\n")
+```
+
+
+
+```{r}
+# ============================
+# 1. Load libraries
+# ============================
+library(lightgbm)
+library(data.table)
+library(shapviz)
+
+# ============================
+# 2. Load training data from CSV
+# ============================
+X_train <- fread("train_df.csv")
+
+# Convert to data.frame if needed
+X_train <- as.data.frame(X_train)
+
+
+# ============================
+# 3. Load LightGBM model
+# ============================
+# If you saved using lgb.save()
+model_lgb <- lgb.load("model_lgb.txt")
+
+# OR if you saved using saveRDS()
+# model_lgb <- readRDS("model_lgb.rds")
+
+# ============================
+# 4. Compute TRUE SHAP values
+# ============================
+#sv <- shapviz(model_lgb,  as.matrix(X_train))
+
+set.seed(123)
+X_sample <- train_matrix[sample(nrow(train_matrix), 50000), ]
+sv <- shapviz(model_lgb, X_sample)
+
+# ============================
+# 5. Display SHAP importance
+# ============================
+# Global importance table
+sv_importance(sv)
+
+# Bar plot of SHAP importance
+sv_importance(sv, kind = "bar")
+
+# Beeswarm plot (best global view)
+sv_importance(sv, kind = "beeswarm")
+
+# ============================
+# 6. SHAP dependence plot
+# ============================
+# Replace with any feature name you want to inspect
+sv_dependence(sv, "LocalTotalFatalities_roll12")
+
+# ============================
+# 7. Access raw SHAP values
+# ============================
+shap_values <- sv$S
+head(shap_values)
+
+# ============================
+# 8. Baseline value (average model prediction)
+# ============================
+sv$baseline
+
+```
+Mean shap is a neat way of understanding which features push the prediction. We can see the most influential feature is RegionalAvgSeverity_roll12: the rolling mean of severity over the prior 12 periods. Country and Place are also influential- some places appear to be inherently more conflict prone than others, perhaps this is expected given conflict breeds conflict. 12 and 3 periods dominate the notable features: again supporting the idea that long term conflict breeds conflict, but ConflictFlag is also notable: current presence of conflice is a notable indictor of future conflict. The only actor type feature that is shown is RegionalRevelGroupEventCount_roll12: the sustained presence of rebel groups within the region in the last 12 breeds conflict. Days since min period start also is influential, suggesting there is a baseline level of conflict increasing as time does, and this is supported in the more imbalanced training set (the end of the period).
+
+# Calculate P value. 
+```{r}
+p <- 1 / (1 + exp(sv$baseline * -1))
+p
+```
+Before features add any value, we have a P value 0.78. This means a 78% chance of conflict in the next six months before taking into account features. As expected, as the dataset is imbalanced. 
+
+# Imbalance Ratio
+```{r}
+
+print("Imbalance ratio of train_df:")
+train_df %>%
+  count(Target_ConflictFlag) %>%
+  mutate(
+    proportion = n / sum(n),
+    imbalance_ratio = max(n) / min(n)
+  )
+
+print("Imbalance ratio of test_df:")
+test_df %>%
+  count(Target_ConflictFlag) %>%
+  mutate(
+    proportion = n / sum(n),
+    imbalance_ratio = max(n) / min(n)
+  )
+```

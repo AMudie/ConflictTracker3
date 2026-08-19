@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="ConflictCalc/ConflictCalc.csproj" Id="c6b94c6a-f69b-4c38-8f70-d108842eae29" />
+  <Project Path="ConflictChat/ConflictChat.csproj" Id="e23e93c5-78cc-4296-9d76-99d33550dbb2" />
+  <Project Path="ConflictCommon/ConflictCommon.csproj" Id="0ef2152d-9bdb-4264-ae62-21c6e15671e4" />
+  <Project Path="ConsoleApp01/ConflictConsole.csproj" />
+</Solution>

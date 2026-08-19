@@ -1,0 +1,122 @@
+---
+title: "Regression RF"
+author: "Andrew Mudie"
+date: "2026-07-24"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+# Load required libraries
+library(caret)
+
+set.seed(123)
+```
+
+
+```{r}
+#Parameter configuration
+path = "C:/Users/andre/source/repos/ConflictTracker2/ConflictTracker/ConflictCalc/R/Sudan_Test2000_24July2026_Preprocessed.csv" #set the file path here
+target = "TargetLocalAvgSeverity_In_OneMonth" #set the name of the target column here
+```
+
+```{r}
+
+data = read.csv(path)
+
+```
+
+
+
+```{r}
+# First split: Train (70%) vs Temp (30%)
+train_index <- createDataPartition(data[[target]], p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+temp_data  <- data[-train_index, ]
+
+# Second split: Test (20%) vs Validation (10%)
+test_index <- createDataPartition(temp_data[[target]], p = 2/3, list = FALSE)
+test_data <- temp_data[test_index, ]
+validation_data <- temp_data[-test_index, ]
+```
+
+
+```{r}
+#Train the model (variable: modelLR)
+
+features = c(
+  #"place",
+  #"country",
+  #"periodStart",
+  "LocalEventCount",
+  "LocalUniqueActorCount",
+  "LocalDistinctEventTypes",
+  "LocalDistinctEventSubtypes",
+  "LocalTotalFatalities",
+  #"LocalAvgSeverity",
+  "RegionalEventCount",
+  "RegionalActorCount",
+  "RegionalDistinctEventTypes",
+  "RegionalDistinctEventSubTypes",
+  "RegionalTotalFatalities",
+  "RegionalAvgSeverity",
+  "RegionalDaysSinceLastEvent",
+  "LocalEventCount_Change",
+  "LocalUniqueActorCount_Change",
+  "LocalDistinctEventTypes_Change",
+  "LocalDistinctEventSubtypes_Change",
+  "LocalTotalFatalities_Change",
+  "LocalAvgSeverity_Change",
+  "RegionalEventCount_Change",
+  "RegionalActorCount_Change",
+  "RegionalDistinctEventTypes_Change",
+  "RegionalDistinctEventSubTypes_Change",
+  "RegionalTotalFatalities_Change",
+  "RegionalAvgSeverity_Change",
+  "RegionalDaysSinceLastEvent_Change"
+ # ",TargetLocalAvgSeverity_In_OneMonth"
+)
+
+
+#formula = as.formula(paste(target, "~ ."))
+
+formula <- as.formula(
+  paste(target, "~", paste(features, collapse = " + "))
+)
+
+modelLR = train(
+  formula,
+  data = train_data,
+  method = "ranger", #high performance C++ implementation of rf. 
+  tuneLength = 1,
+  ntree = 200 #number of trees, default is 500. 
+)
+```
+
+```{r}
+test_pred <- predict(modelLR, newdata = test_data)
+
+test_rmse <- RMSE(test_pred, test_data[[target]])
+test_r2   <- R2(test_pred, test_data[[target]])
+
+cat("Test RMSE:", test_rmse, "\n")
+cat("Test R2:", test_r2, "\n")
+```
+
+
+```{r}
+#final validation:
+val_pred <- predict(modelLR, newdata = validation_data)
+
+val_rmse <- RMSE(val_pred, validation_data[[target]])
+val_r2   <- R2(val_pred, validation_data[[target]])
+
+cat("Validation RMSE:", val_rmse, "\n")
+cat("Validation R2:", val_r2, "\n")
+```
+
+Validation of 0.25 (avg local severity) RMSE: in a sense this is "good", the predictions are within 0.25 of a severity value (+/-). However, Validation R^2 of 0.1 means only 10% of the variation in avg local severity is being explained by the features within the model- the model is trash!

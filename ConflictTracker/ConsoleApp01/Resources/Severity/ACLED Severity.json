@@ -1,0 +1,158 @@
+[
+  {
+    "Event type": "Battles",
+    "Sub-event type": "Government regains territory",
+    "Disorder type": "Political violence",
+    "Severity": 5
+  },
+  {
+    "Event type": "Battles",
+    "Sub-event type": "Non-state actor overtakes territory",
+    "Disorder type": "Political violence",
+    "Severity": 5
+  },
+  {
+    "Event type": "Battles",
+    "Sub-event type": "Armed clash",
+    "Disorder type": "Political violence",
+    "Severity": 4
+  },
+  {
+    "Event type": "Protests",
+    "Sub-event type": "Excessive force against Protesters",
+    "Disorder type": "Political violence",
+    "Severity": 2
+  },
+  {
+    "Event type": "Protests",
+    "Sub-event type": "Excessive force against Protesters",
+    "Disorder type": "Demonstrations",
+    "Severity": 2
+  },
+  {
+    "Event type": "Protests",
+    "Sub-event type": "Protest with intervention",
+    "Disorder type": "Demonstrations",
+    "Severity": 1
+  },
+  {
+    "Event type": "Protests",
+    "Sub-event type": "Peaceful protest",
+    "Disorder type": "Demonstrations",
+    "Severity": 0
+  },
+  {
+    "Event type": "Riots",
+    "Sub-event type": "Violent demonstration",
+    "Disorder type": "Demonstrations",
+    "Severity": 1
+  },
+  {
+    "Event type": "Riots",
+    "Sub-event type": "Mob violence",
+    "Disorder type": "Political violence",
+    "Severity": 1
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Chemical weapon",
+    "Disorder type": "Political violence",
+    "Severity": 4
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Air/drone strike",
+    "Disorder type": "Political violence",
+    "Severity": 4
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Suicide bomb",
+    "Disorder type": "Political violence",
+    "Severity": 3
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Shelling/artillery/missile attack",
+    "Disorder type": "Political violence",
+    "Severity": 3
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Remote explosive/landmine/IED",
+    "Disorder type": "Political violence",
+    "Severity": 3
+  },
+  {
+    "Event type": "Explosions/Remote violence",
+    "Sub-event type": "Grenade",
+    "Disorder type": "Political violence",
+    "Severity": 3
+  },
+  {
+    "Event type": "Violence against civilians",
+    "Sub-event type": "Sexual violence",
+    "Disorder type": "Political violence",
+    "Severity": 3
+  },
+  {
+    "Event type": "Violence against civilians",
+    "Sub-event type": "Attack",
+    "Disorder type": "Political violence",
+    "Severity": 2
+  },
+  {
+    "Event type": "Violence against civilians",
+    "Sub-event type": "Abduction/forced disappearance",
+    "Disorder type": "Political violence",
+    "Severity": 2
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Agreement",
+    "Disorder type": "Strategic developments",
+    "Severity": 0
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Arrests",
+    "Disorder type": "Strategic developments",
+    "Severity": 1
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Change to group/activity",
+    "Disorder type": "Strategic developments",
+    "Severity": 0
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Disrupted weapons use",
+    "Disorder type": "Strategic developments",
+    "Severity": 1
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Headquarters or base established",
+    "Disorder type": "Strategic developments",
+    "Severity": 0
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Looting/property destruction",
+    "Disorder type": "Strategic developments",
+    "Severity": 1
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Non-violent transfer of territory",
+    "Disorder type": "Strategic developments",
+    "Severity": 0
+  },
+  {
+    "Event type": "Strategic developments",
+    "Sub-event type": "Other",
+    "Disorder type": "Strategic developments",
+    "Severity": null
+  }
+]

@@ -1,0 +1,914 @@
+---
+title: "TimeSeries2"
+author: "Andrew Mudie"
+date: "2026-07-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(forecast)
+
+set.seed(123)
+```
+
+
+```{r}
+
+# ------------------------------------------------------------
+# 1. Load the CSV
+# ------------------------------------------------------------
+
+csv_path = "C:/Users/andre/source/repos/ConflictTracker2/ConflictTracker/ConflictCalc/R/Sudan_Test2000_30July2026_Preprocessed.csv"
+df = read.csv(csv_path, stringsAsFactors = FALSE)
+
+# Inspect
+head(df)
+#head(df$periodStart, 20)
+```
+
+
+
+```{r}
+# ------------------------------------------------------------
+# 2. Convert periodStart to Date
+# ------------------------------------------------------------
+
+df$periodStart = as.Date(trimws(df$periodStart), format = "%d/%m/%Y")
+# Inspect
+head(df)
+```
+
+```{r}
+#Add a month and season feature, based off the periodStart:
+library(lubridate)
+library(dplyr)
+
+df <- df %>%
+  mutate(
+    month = month(periodStart),  # numeric month 1–12
+
+    season = case_when(
+      month %in% c(12, 1, 2) ~ "winter",
+      month %in% c(3, 4, 5)  ~ "spring",
+      month %in% c(6, 7, 8)  ~ "summer",
+      month %in% c(9, 10, 11) ~ "autumn"
+    ),
+
+    season = factor(season, levels = c("winter", "spring", "summer", "autumn"))
+  )
+
+head(df)
+
+```
+
+
+```{r}
+# ------------------------------------------------------------
+# 3. Remove rows after July 2025: remove incomplete periods.
+# ------------------------------------------------------------
+cat("Before removing Rows:", nrow(df), "  Columns:", ncol(df), "\n")
+cutoff = as.Date("2025/07/01")
+df = df %>% filter(periodStart <= cutoff)
+cat("After removing Rows:", nrow(df), "  Columns:", ncol(df), "\n")
+```
+```{r}
+
+df <- df %>%
+  arrange(country, place, periodStart) %>%   # correct ordering
+  group_by(country, place) %>%
+  mutate(
+    # Local severity lags 2 and 3
+    LocalEventCount_lag1 = lag(LocalEventCount, 1),
+    LocalUniqueActorCount_lag1 = lag(LocalUniqueActorCount, 1),
+    LocalDistinctEventTypes_lag1 = lag(LocalDistinctEventTypes, 1),
+    LocalDistinctEventSubtypes_lag1 = lag(LocalDistinctEventSubtypes, 1),
+    LocalTotalFatalities_lag1 = lag(LocalTotalFatalities, 1),
+    LocalAvgSeverity_lag1 = lag(LocalAvgSeverity, 1),
+    
+    LocalEventCount_lag2 = lag(LocalEventCount, 2),
+    LocalUniqueActorCount_lag2 = lag(LocalUniqueActorCount, 2),
+    LocalDistinctEventTypes_lag2 = lag(LocalDistinctEventTypes, 2),
+    LocalDistinctEventSubtypes_lag2 = lag(LocalDistinctEventSubtypes, 2),
+    LocalTotalFatalities_lag2 = lag(LocalTotalFatalities, 2),
+    LocalAvgSeverity_lag2 = lag(LocalAvgSeverity, 2),
+      
+    LocalEventCount_lag3 = lag(LocalEventCount, 3),
+    LocalUniqueActorCount_lag3 = lag(LocalUniqueActorCount, 3),
+    LocalDistinctEventTypes_lag3 = lag(LocalDistinctEventTypes, 3),
+    LocalDistinctEventSubtypes_lag3 = lag(LocalDistinctEventSubtypes, 3),
+    LocalTotalFatalities_lag3 = lag(LocalTotalFatalities, 3),
+    LocalAvgSeverity_lag3 = lag(LocalAvgSeverity, 3),
+
+    # Regional severity lags 1, 2 and 3
+
+        RegionalEventCount_lag1 = lag(RegionalEventCount, 1),
+    RegionalActorCount_lag1 = lag(RegionalActorCount, 1),
+    RegionalDistinctEventSubTypes_lag1 = lag(RegionalDistinctEventSubTypes, 1),
+    RegionalTotalFatalities_lag1 = lag(RegionalTotalFatalities, 1),
+    RegionalAvgSeverity_lag1 = lag(RegionalAvgSeverity, 1),
+    
+    RegionalEventCount_lag2 = lag(RegionalEventCount, 2),
+    RegionalActorCount_lag2 = lag(RegionalActorCount, 2),
+    RegionalDistinctEventSubTypes_lag2 = lag(RegionalDistinctEventSubTypes, 2),
+    RegionalTotalFatalities_lag2 = lag(RegionalTotalFatalities, 2),
+    RegionalAvgSeverity_lag2 = lag(RegionalAvgSeverity, 2),
+
+    RegionalEventCount_lag3 = lag(RegionalEventCount, 3),
+    RegionalActorCount_lag3 = lag(RegionalActorCount, 3),
+    RegionalDistinctEventSubTypes_lag3 = lag(RegionalDistinctEventSubTypes, 3),
+    RegionalTotalFatalities_lag3 = lag(RegionalTotalFatalities, 3),
+    RegionalAvgSeverity_lag3 = lag(RegionalAvgSeverity, 3),
+    
+    #Lags 1-3 for Regional actor types
+RegionalProtestersEventCount_lag1 = lag(RegionalProtestersEventCount, 1),
+RegionalStateForcesEventCount_lag1 = lag(RegionalStateForcesEventCount, 1),
+RegionalPoliticalMilitiaEventCount_lag1 = lag(RegionalPoliticalMilitiaEventCount, 1),
+RegionalIdentityMilitiaEventCount_lag1 = lag(RegionalIdentityMilitiaEventCount, 1),
+RegionalRebelGroupEventCount_lag1 = lag(RegionalRebelGroupEventCount, 1),
+RegionalCiviliansEventCount_lag_1 =lag(RegionalCiviliansEventCount, 1),
+RegionalRiotersEventCount_lag1 = lag(RegionalRiotersEventCount, 1),
+RegionalOtherTypeEventCount_lag1 = lag(RegionalOtherTypeEventCount, 1),
+RegionalProtestersEventCount_lag2 = lag(RegionalProtestersEventCount, 2),
+RegionalStateForcesEventCount_lag2 = lag(RegionalStateForcesEventCount, 2),
+RegionalPoliticalMilitiaEventCount_lag2 = lag(RegionalPoliticalMilitiaEventCount, 2),
+RegionalIdentityMilitiaEventCount_lag2 = lag(RegionalIdentityMilitiaEventCount, 2),
+RegionalRebelGroupEventCount_lag2 = lag(RegionalRebelGroupEventCount, 2),
+RegionalCiviliansEventCount_lag_2 =lag(RegionalCiviliansEventCount, 2),
+RegionalRiotersEventCount_lag2 = lag(RegionalRiotersEventCount, 2),
+RegionalOtherTypeEventCount_lag2 = lag(RegionalOtherTypeEventCount, 2),
+RegionalProtestersEventCount_lag3 = lag(RegionalProtestersEventCount, 3),
+RegionalStateForcesEventCount_lag3 = lag(RegionalStateForcesEventCount, 3),
+RegionalPoliticalMilitiaEventCount_lag3 = lag(RegionalPoliticalMilitiaEventCount, 3),
+RegionalIdentityMilitiaEventCount_lag3 = lag(RegionalIdentityMilitiaEventCount, 3),
+RegionalRebelGroupEventCount_lag3 = lag(RegionalRebelGroupEventCount, 3),
+RegionalCiviliansEventCount_lag_3 =lag(RegionalCiviliansEventCount, 3),
+RegionalRiotersEventCount_lag3 = lag(RegionalRiotersEventCount, 3),
+RegionalOtherTypeEventCount_lag3 = lag(RegionalOtherTypeEventCount, 3)
+    
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# ------------------------------------------------------------
+# Add longer trend (avg over previous three periods) local features
+#"LocalEventCount","LocalUniqueActorCount","LocalDistinctEventTypes","LocalDistinctEventSubtypes","LocalTotalFatalities","LocalAvgSeverity"
+# ------------------------------------------------------------
+
+library(dplyr)
+library(zoo)
+
+df <- df %>%
+  arrange(country, place, periodStart) %>%   # ensure correct ordering
+  group_by(place, country) %>%
+  mutate(
+    LocalEventCount_roll3 = rollapply(
+      LocalEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+       LocalUniqueActorCount_roll3 = rollapply(
+      LocalUniqueActorCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalDistinctEventTypes_roll3 = rollapply(
+      LocalDistinctEventTypes,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalDistinctEventSubtypes_roll3 = rollapply(
+     LocalDistinctEventSubtypes,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalTotalFatalities_roll3 = rollapply(
+     LocalTotalFatalities,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalAvgSeverity_roll3 = rollapply(
+      LocalAvgSeverity,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+    #Local actor types:
+        LocalProtestersEventCount_roll3 = rollapply(
+      LocalProtestersEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	        LocalStateForcesEventCount_roll3 = rollapply(
+      LocalStateForcesEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalPoliticalMilitiaEventCount_roll3 = rollapply(
+      LocalPoliticalMilitiaEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalIdentityMilitiaEventCount_roll3 = rollapply(
+      LocalIdentityMilitiaEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	   LocalRebelGroupEventCount_roll3 = rollapply(
+      LocalRebelGroupEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalCiviliansEventCount_roll3 = rollapply(
+      LocalCiviliansEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalRiotersEventCount_roll3 = rollapply(
+      LocalRiotersEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalOtherTypeEventCount_roll3 = rollapply(
+      LocalOtherTypeEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  )
+    
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# ------------------------------------------------------------
+# Add longer trend (avg over previous three periods) regional features
+#RegionalEventCount","RegionalActorCount","RegionalDistinctEventTypes","RegionalDistinctEventSubTypes","RegionalTotalFatalities","RegionalAvgSeverity"
+# ------------------------------------------------------------
+
+library(dplyr)
+library(zoo)
+
+df <- df %>%
+  arrange(country, place, periodStart) %>%   # ensure correct ordering
+  group_by(place, country) %>%
+  mutate(
+    RegionalEventCount_roll3 = rollapply(
+      RegionalEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+  
+        RegionalActorCount_roll3 = rollapply(
+     RegionalActorCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+  
+    
+        RegionalDistinctEventTypes_roll3 = rollapply(
+      RegionalDistinctEventTypes,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+       RegionalDistinctEventTypes_roll3 = rollapply(
+     RegionalDistinctEventTypes,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        RegionalTotalFatalities_roll3 = rollapply(
+      RegionalTotalFatalities,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+        RegionalAvgSeverity_roll3 = rollapply(
+      RegionalAvgSeverity,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+    ),
+    
+    #Rolling windows for Regional actor types:
+    RegionalProtestersEventCount_roll3 = rollapply(
+      RegionalProtestersEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	        RegionalStateForcesEventCount_roll3 = rollapply(
+      RegionalStateForcesEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalPoliticalMilitiaEventCount_roll3 = rollapply(
+      RegionalPoliticalMilitiaEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalIdentityMilitiaEventCount_roll3 = rollapply(
+      RegionalIdentityMilitiaEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	   RegionalRebelGroupEventCount_roll3 = rollapply(
+      RegionalRebelGroupEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalCiviliansEventCount_roll3 = rollapply(
+      RegionalCiviliansEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalRiotersEventCount_roll3 = rollapply(
+      RegionalRiotersEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalOtherTypeEventCount_roll3 = rollapply(
+      RegionalOtherTypeEventCount,
+      width = 3,
+      FUN = mean,
+      align = "right",
+      fill = NA
+	  )
+  ) %>%
+  ungroup()
+```
+
+```{r}
+head(df)
+```
+```{r}
+#Add the volatility features (..._vol3, for both local and regional features):
+
+df <- df %>%
+  arrange(country, place, periodStart) %>%   # ensure correct ordering
+  group_by(place, country) %>%
+  mutate(
+    LocalEventCount_vol3 = rollapply(
+      LocalEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+       LocalUniqueActorCount_vol3 = rollapply(
+      LocalUniqueActorCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalDistinctEventTypes_vol3 = rollapply(
+      LocalDistinctEventTypes,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalDistinctEventSubtypes_vol3 = rollapply(
+     LocalDistinctEventSubtypes,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalTotalFatalities_vol3 = rollapply(
+     LocalTotalFatalities,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+        LocalAvgSeverity_vol3 = rollapply(
+      LocalAvgSeverity,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+            RegionalEventCount_vol3 = rollapply(
+      RegionalEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+
+        RegionalActorCount_vol3 = rollapply(
+     RegionalActorCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+  
+    
+        RegionalDistinctEventTypes_vol3 = rollapply(
+      RegionalDistinctEventTypes,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+       RegionalDistinctEventSubTypes_vol3 = rollapply(
+     RegionalDistinctEventSubTypes,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+        RegionalTotalFatalities_vol3 = rollapply(
+      RegionalTotalFatalities,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+    
+      RegionalAvgSeverity_vol3 = rollapply(
+      RegionalAvgSeverity,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+    ),
+  #Local actor types:
+      LocalProtestersEventCount_vol3 = rollapply(
+      LocalProtestersEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+
+	 LocalStateForcesEventCount_vol3 = rollapply(
+      LocalStateForcesEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalPoliticalMilitiaEventCount_vol3 = rollapply(
+      LocalPoliticalMilitiaEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalIdentityMilitiaEventCount_vol3 = rollapply(
+      LocalIdentityMilitiaEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	   LocalRebelGroupEventCount_vol3 = rollapply(
+      LocalRebelGroupEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalCiviliansEventCount_vol3 = rollapply(
+      LocalCiviliansEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalRiotersEventCount_vol3 = rollapply(
+      LocalRiotersEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  LocalOtherTypeEventCount_vol3 = rollapply(
+      LocalOtherTypeEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+    
+    
+    
+    
+    
+    #Regional actor types:
+    RegionalProtestersEventCount_vol3 = rollapply(
+      RegionalProtestersEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+
+	 RegionalStateForcesEventCount_vol3 = rollapply(
+      RegionalStateForcesEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalPoliticalMilitiaEventCount_vol3 = rollapply(
+      RegionalPoliticalMilitiaEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalIdentityMilitiaEventCount_vol3 = rollapply(
+      RegionalIdentityMilitiaEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	   RegionalRebelGroupEventCount_vol3 = rollapply(
+      RegionalRebelGroupEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalCiviliansEventCount_vol3 = rollapply(
+      RegionalCiviliansEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalRiotersEventCount_vol3 = rollapply(
+      RegionalRiotersEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  ),
+	  
+	  RegionalOtherTypeEventCount_vol3 = rollapply(
+      RegionalOtherTypeEventCount,
+      width = 3,
+      FUN = sd,
+      align = "right",
+      fill = NA
+	  )
+  ) %>%
+  ungroup()
+```
+
+
+```{r}
+# ------------------------------------------------------------
+# 4. Choose a target variable for forecasting
+# ------------------------------------------------------------
+
+
+target_var = "LocalAvgSeverity"   # set this to any column you want
+
+target_colname = paste0("Target_", target_var)
+
+df <- df %>%
+  arrange(country, place, periodStart) %>%   # global sort for safety
+  group_by(country, place) %>%              # correct grouping
+  mutate(
+    !!target_colname := lead(.data[[target_var]], 1)   # next period
+  ) %>%
+  ungroup()
+```
+
+```{r}
+#Remove noise (places that are only present because something happened in the region)
+
+cat("Before removing Rows:", nrow(df), "  Columns:", ncol(df), "\n")
+df <- df %>%
+  group_by(country, place) %>%
+  filter(sum(LocalEventCount, na.rm = TRUE) > 0) %>%
+  ungroup()
+cat("After removing Rows:", nrow(df), "  Columns:", ncol(df), "\n")
+```
+
+
+```{r}
+
+#write.csv(head(df), "df_columns_check.csv", row.names = FALSE)
+#names(df)
+
+#Remove duff columns (these are the CIA World Factbook columns for now, plus latitude and longitude and periodEnd)
+
+cols_to_remove= c("latitude", "longitude", "periodEnd",
+                  
+   "LocalEventCount","LocalUniqueActorCount","LocalDistinctEventTypes","LocalDistinctEventSubtypes","LocalTotalFatalities","LocalAvgSeverity","RegionalEventCount","RegionalActorCount","RegionalDistinctEventTypes","RegionalDistinctEventSubTypes","RegionalTotalFatalities","RegionalAvgSeverity",              
+                  
+   
+   "LocalProtestersEventCount", "LocalStateForcesEventCount", "LocalPoliticalMilitiaEventCount", "LocalCiviliansEventCount",   "LocalIdentityMilitiaEventCount",   "LocalRebelGroupEventCount",      "LocalRiotersEventCount",   "LocalOtherTypeEventCount",
+   
+      "RegionalProtestersEventCount", "RegionalStateForcesEventCount", "RegionalPoliticalMilitiaEventCount", "RegionalCiviliansEventCount",   "RegionalIdentityMilitiaEventCount",   "RegionalRebelGroupEventCount",      "RegionalRiotersEventCount",   "RegionalOtherTypeEventCount",
+   
+"Budget","Budget.surplus.....or.deficit....","Debt...external","Disputes...international","Ethnic.groups","Executive.branch","GDP..official.exchange.rate.","Government.type","Independence","International.law.organization.participation","International.organization.participation","Judicial.branch","Land.boundaries","Languages","Legal.system","Legislative.branch","Maritime.claims","Military.and.security.forces","Military.and.security.service.personnel.strengths","Military.deployments","Military.equipment.inventories.and.acquisitions","Military.expenditures","Military.service.age.and.obligation","Natural.resources","Political.parties","Population","Population.below.poverty.line","Population.distribution","Population.growth.rate","Public.debt","Real.GDP..purchasing.power.parity.","Real.GDP.growth.rate","Real.GDP.per.capita","Refugees.and.internally.displaced.persons","Religions","Terrain","Trafficking.in.persons","Unemployment.rate","Urbanization","Youth.unemployment.rate..ages.15.24."
+)
+
+
+
+# Iterate and drop columns one by one
+for (col in cols_to_remove) {
+  if (col %in% names(df)) {
+    df = df %>% select(-all_of(col))
+  }
+}
+
+
+names(df)
+summary(df)
+
+```
+
+
+
+
+```{r}
+# ------------------------------------------------------------
+# 5. Create numeric time index and split into train/test
+# ------------------------------------------------------------
+
+# Ensure periodStart is a Date
+df$periodStart = as.Date(df$periodStart)
+
+# Compute the minimum date across the full dataset
+min_date = min(df$periodStart, na.rm = TRUE)
+
+# Create numeric DaysSinceMinPeriodStart
+df = df %>%
+  mutate(DaysSinceMinPeriodStart = as.numeric(periodStart - min_date))
+
+# ------------------------------------------------------------
+# Remove earliest period per place (lag features invalid there)
+# ------------------------------------------------------------
+
+earliest = df %>%
+  group_by(place) %>%
+  summarise(earliest_period = min(periodStart)) %>%
+  ungroup()
+
+df_no_earliest = df %>%
+  left_join(earliest, by = "place") %>%
+  filter(periodStart != earliest_period)
+
+# ------------------------------------------------------------
+# Define cutoff dates
+# ------------------------------------------------------------
+
+T1 = as.Date("2025-01-22")
+T2 = as.Date("2025-05-14")   # last complete period
+
+# ------------------------------------------------------------
+# Split into training and test sets
+# ------------------------------------------------------------
+
+train_df = df_no_earliest %>%
+  filter(periodStart <= T1) %>%
+  select(-periodStart)   # drop original date column
+
+test_df = df_no_earliest %>%
+  filter(periodStart > T1 & periodStart <= T2) %>%
+  select(-periodStart)   # drop original date column
+
+# Optional: capture earliest rows separately
+#earliest_rows = df %>%
+ # inner_join(earliest, by = "place") %>%
+ # filter(periodStart == earliest_period)
+
+train_df$earliest_period = NULL
+test_df$earliest_period = NULL
+
+head(train_df)
+head(test_df)
+
+write.csv(train_df, "train_df.csv", row.names = FALSE)
+write.csv(test_df,  "test_df.csv",  row.names = FALSE)
+```
+
+
+```{r}
+#Install Catboost (requires rlang 1.2.0+ and rtools 4.5+)
+
+
+#install.packages("devtools") 
+devtools::install_github("catboost/catboost", subdir = "catboost/R-package")
+library(catboost)
+
+library(dplyr)
+```
+
+```{r}
+# ------------------------------------------------------------
+# 6. train a catboost model based on country and place forming the composite key. 
+# ------------------------------------------------------------
+
+
+head(train_df)
+
+#Prepare CatBoost training pool
+
+print(cat("Target column: ", target_colname))
+
+cat_features = c("country", "place")
+
+train_pool = catboost.load_pool(
+  data  = train_df %>% select(-all_of(target_colname)),
+  label = train_df[[target_colname]],
+  cat_features = cat_features
+)
+
+#Train the global CatBoost model
+params = list(
+  loss_function = "RMSE",
+  iterations = 500,
+  depth = 8,
+  learning_rate = 0.05
+)
+
+model_catBoost = catboost.train(train_pool, params = params)
+
+```
+
+
+
+```{r}
+# ------------------------------------------------------------
+# 4. Compute training evaluation metrics
+# ------------------------------------------------------------
+
+test_pool <- catboost.load_pool(
+  data  = test_df %>% select(-all_of(target_colname)),
+  label = test_df[[target_colname]],
+  cat_features = cat_features
+)
+
+# ------------------------------------------------------------
+# Generate predictions
+# ------------------------------------------------------------
+
+preds <- catboost.predict(model_catBoost, test_pool)
+
+# Actual values
+actuals <- test_df[[target_colname]]
+
+# ------------------------------------------------------------
+# Evaluation metrics
+# ------------------------------------------------------------
+
+# RMSE
+rmse <- sqrt(mean((preds - actuals)^2))
+
+# MAE
+mae <- mean(abs(preds - actuals))
+
+# MAPE (avoid division by zero)
+mape <- mean(abs((preds - actuals) / pmax(actuals, 1e-8))) * 100
+
+# R-squared
+ss_res <- sum((actuals - preds)^2)
+ss_tot <- sum((actuals - mean(actuals))^2)
+r2 <- 1 - ss_res/ss_tot
+
+# ------------------------------------------------------------
+# Print results
+# ------------------------------------------------------------
+
+cat("RMSE: ", rmse, "\n")
+cat("MAE:  ", mae, "\n")
+cat("MAPE: (not suitable if 0s in dataset)", mape, "%\n")
+cat("R²:   ", r2, "\n")
+
+```
+RMSE is much higher than MAE- making a few huge mistakes.
+Low R^2 means the model is underfitting. 
+
+A couple of options here. 
+-Switch target metric- regional severity?
+-Add more features (actor x/y/z active)
+-Add seasonality (from month of startperiod)
+-Remove raw local/regional features
+-Add lag1/lag2/lag3
+-Add rolling mean/std (3 periods)
+-Add actor presence lag1
+-Add Distance from Border
+
+
+Update 28th July 2026.
+-Added lag features (raw values at T-1, T-2 and T-3)
+-Added trend features (mean over 3 prior periods)
+-Added volatility features (std dev).
+-Switched metric to RegionalAvgSeverity
+-Fixed an issue with incorrect ordering
+-Removed raw features.
+-Added seasonal features season and month
+-And still R^2 is terrible at 0.04! 
+
+Next actions: Add some actor based features (Is_Rebel_Present, Is_State_Military_present, etc)
+-Spatial features (distance from border, distance from capital)
+-
+
