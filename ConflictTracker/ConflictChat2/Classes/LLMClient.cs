@@ -7,11 +7,14 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http.Json;
+using System.Numerics;
+using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using static ConflictCommon.Classes.StaticHelpers.Neo4jQueryService;
+using static Microsoft.Recognizers.Text.DataTypes.TimexExpression.Resolution;
 using static System.Net.WebRequestMethods;
 
 namespace ConflictChat2.Classes
@@ -110,6 +113,29 @@ namespace ConflictChat2.Classes
         public async Task<string> AskModelKGRAG(string kgName, string uri, string username, string password, string userPrompt)
         {
 
+//1.User Query
+//    ↓
+//2.LLM: Intent + Entity Extraction
+//    ↓
+//3.LLM: Intent Classification
+//    ↓
+//4.LLM: JSON Query Plan
+//    ↓
+//5.Backend: Cypher Template Assembly
+//    ↓
+//6.Backend: Cypher Validation
+//    ↓
+//7.Neo4j: Execute Query
+//    ↓
+//8.Backend: Relevance Filtering
+//    ↓
+//9.LLM: Analysis + Prediction
+//    ↓
+//10.Short - term Memory Update
+//    ↓
+//11.Final Answer to User
+
+
             //add the user's query to the STM:
             await _shortTermMemory.AddAsync("user", userPrompt, this);
 
@@ -157,6 +183,11 @@ namespace ConflictChat2.Classes
                 }
                 else
                 {
+
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"Intent: {intent}");
+                    Console.ResetColor();
+
                     //Now we need to extract facts from the KG:
 
                     string template = Constants.Constants.QueryTemplates[intent];
@@ -181,6 +212,11 @@ namespace ConflictChat2.Classes
                  .EnumerateArray()
                  .Select(x => x.GetString())
                  .ToList());
+                    parameters.Add("event_summary_fragments", root.GetProperty("entities")
+       .GetProperty("event_summary_fragments")
+       .EnumerateArray()
+       .Select(x => x.GetString())
+       .ToList());
                     //   parameters.Add("dates", root.GetProperty("entities")
                     //.GetProperty("dates")
                     //.EnumerateArray()
@@ -197,6 +233,11 @@ namespace ConflictChat2.Classes
                     //load the nodes into human (or SLM...) readable "fact" strings:
                     List<Dictionary<string, object>> nodes = await new Neo4jQueryService(uri, username, password).ExecuteQueryAsync(template, parameters, kgName);
                     List<string> facts = ProcessNodesToStringFacts(nodes);
+
+                    //filter facts for relevance
+                    facts = FilterMostRelevantFacts(facts);
+
+
                     string factsPromptComponent =
                       "Here are known facts to help with your answer:\n\n" +
                       string.Join(Environment.NewLine, facts.Select(f => "-" + f));
@@ -253,6 +294,28 @@ namespace ConflictChat2.Classes
             return reply;
         }
 
+        /// <summary>
+        /// apply processing to get the most relevant facts from the KG query results. Currently this just returns the last 10 facts, but in future it could be modified to use a relevance scoring system to return the most relevant facts instead of just the most recent ones.
+        /// </summary>
+        /// <param name="facts"></param>
+        /// <returns></returns>
+        private List<string> FilterMostRelevantFacts(List<string> facts)
+        {
+            if (facts.Count < 10)
+            {
+                return facts;
+
+            }
+            else
+            {
+                return facts.TakeLast(10).ToList();
+            }
+
+            //TODO: modify so that only the most relevant facts are returned, not just the most recent ones. This will require some sort of relevance scoring, which could be done with a simple keyword match or a more complex NLP model.
+
+
+        }
+
         #region "Node Processing"
         private List<string> ProcessNodesToStringFacts(List<Dictionary<string, object>> nodes)
         {
@@ -267,9 +330,6 @@ namespace ConflictChat2.Classes
                              ?? ExtractSingleNode(node, "e")
                              ?? ExtractSingleNode(node, "target");
 
-                if (events == null || events.Count == 0)
-                    continue;
-
                 // Extract actors
                 var actors = ExtractNodes(node, "actors")
                              ?? ExtractNodes(node, "involved_actors")
@@ -278,7 +338,20 @@ namespace ConflictChat2.Classes
 
                 // Extract places
                 var places = ExtractNodes(node, "places")
-                             ?? ExtractNodes(node, "place");
+                             ?? ExtractNodes(node, "place")
+                             ?? ExtractSingleNode(node, "p")
+                             ?? ExtractSingleNode(node, "country")
+                             ?? ExtractSingleNode(node, "place")
+                             ?? ExtractSingleNode(node, "places");
+
+                if (events == null || events.Count == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("No events from query.");
+                    Console.ResetColor();
+                    continue;
+                }
+          
 
                 foreach (var ev in events)
                 {

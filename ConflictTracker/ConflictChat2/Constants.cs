@@ -1,6 +1,11 @@
-﻿using System;
+﻿using ConflictCommon.Classes.DTOs;
+using Microsoft.Extensions.Options;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
+using System.Numerics;
 using System.Text;
+using System.Xml.Linq;
 
 namespace ConflictChat2.Constants
 {
@@ -9,6 +14,7 @@ namespace ConflictChat2.Constants
         /// <summary>
         /// Useful for reference. Expand as required. We may need to put relationships in between allied and opposing actors. 
         /// </summary>
+        [Obsolete]
         private const string KGSchema = """
             Nodes:
             Border(location, country) //WGS-84 points on border
@@ -57,36 +63,85 @@ namespace ConflictChat2.Constants
     """;
 
         private const string PlaceCentricTemplate = """
+    //Place centric template
     MATCH (p:Place)
-    WHERE p.name IN $places AND p.country IN $countries
-    OPTIONAL MATCH (e:Event)-[:OCCURRED_AT]->(p)
-    OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
-    RETURN p,
-           collect(DISTINCT e) AS events,
-           collect(DISTINCT a) AS actors
+    WHERE ((p.name IN $places OR size($places) = 0) AND (p.country IN $countries OR size($countries) = 0))
+
+    MATCH (child)-[:WITHIN]->(p)
+    MATCH (p)<-[:WITHIN]-(parent)
+
+    WITH collect(DISTINCT child) +
+         collect(DISTINCT parent) +
+         collect (p) AS places
+
+    UNWIND places AS place
+
+    MATCH (e:Event)-[:OCCURRED_AT]->(place)
+
+    RETURN DISTINCT place, collect(DISTINCT e) AS events
     """;
 
+
+        //    private const string EventCentricTemplate = """
+        ////EventCentricTemplate
+        //MATCH (e:Event)
+        //WHERE e.id IN $event_ids
+        //OPTIONAL MATCH (e)-[:OCCURRED_AT]->(p:Place)
+        //OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
+        //RETURN e,
+        //       p AS place,
+        //       collect(DISTINCT a) AS actors
+        //""";
 
         private const string EventCentricTemplate = """
-    //EventCentricTemplate
-    MATCH (e:Event)
-    WHERE e.id IN $event_ids
-    OPTIONAL MATCH (e)-[:OCCURRED_AT]->(p:Place)
-    OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
-    RETURN e,
-           p AS place,
-           collect(DISTINCT a) AS actors
-    """;
+
+        // 1. Select root places based on optional filters
+        MATCH (root:Place)
+        WHERE ((root.name IN $places OR size($places) = 0) AND (root.country IN $countries OR size($countries) = 0))
+
+        // 2. Traverse hierarchy up and down (all levels)
+        OPTIONAL MATCH(root)-[:WITHIN*0..]->(ancestor:Place)
+        OPTIONAL MATCH(descendant:Place)-[:WITHIN*0..]->(root)
+        
+        // 3. Combine all related places
+        WITH collect(DISTINCT root) +
+             collect(DISTINCT ancestor) +
+             collect(DISTINCT descendant) AS allPlaces,
+             $event_summary_fragments AS fragments
+        
+        // 4. Expand list into rows
+        UNWIND allPlaces AS place
+        
+        // 5. Match events at any of those places
+        MATCH(e:Event)-[:OCCURRED_AT]->(place)
+        
+        // 6. Filter events by summary fragments (case-insensitive)
+        WHERE ANY(fragment IN fragments
+                  WHERE toLower(e.summary) CONTAINS toLower(fragment)
+                    OR toLower(e.type) CONTAINS toLower(fragment)
+                    OR toLower(e.subtype) CONTAINS toLower(fragment))
+        
+        RETURN DISTINCT e
+
+        """;
 
 
         private const string PredictivePlaceTemplate = """
     //PredictivePlaceTemplate
     MATCH (p:Place)
-    WHERE p.name IN $places AND p.country IN $countries
-    MATCH (e:Event)-[:OCCURRED_AT]->(p)
-    WHERE e.datetime >= $cutoff_datetime
+    WHERE (size($places) = 0 OR p.name IN $places)
+      AND (size($countries) = 0 OR p.country IN $countries)
+
+    OPTIONAL MATCH (descendant:Place)-[:WITHIN*0..]->(p)
+
+    WITH collect(DISTINCT p) + collect(DISTINCT descendant) AS allPlaces
+
+    UNWIND allPlaces AS place
+
+    OPTIONAL MATCH (e:Event)-[:OCCURRED_AT]->(place)
     OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
-    RETURN p,
+
+    RETURN DISTINCT place,
            collect(DISTINCT e) AS recent_events,
            collect(DISTINCT a) AS involved_actors
     """;
@@ -94,40 +149,49 @@ namespace ConflictChat2.Constants
         private const string PredictiveActorTemplate = """
     //PredictiveActorTemplate:
     MATCH (p:Place)
-    WHERE p.country IN $countries
-    MATCH (e:Event)-[:OCCURRED_AT]->(p)
-    WHERE e.datetime >= $cutoff_datetime
-    OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
-    RETURN collect(DISTINCT p) AS places,
+    WHERE (size($places) = 0 OR p.name IN $places)
+      AND (size($countries) = 0 OR p.country IN $countries)
+
+    OPTIONAL MATCH (descendant:Place)-[:WITHIN*0..]->(p)
+
+    WITH collect(DISTINCT p) + collect(DISTINCT descendant) AS allPlaces
+
+    UNWIND allPlaces AS place
+
+    MATCH (e:Event)-[:OCCURRED_AT]->(place)
+    //WHERE e.datetime >= $cutoff_datetime
+    MATCH (a:Actor)-[:INVOLVED_IN]->(e)
+        WHERE size($actors) = 0 OR a.name IN $actors
+    RETURN DISTINCT place,
            collect(DISTINCT e) AS recent_events,
            collect(DISTINCT a) AS involved_actors
     """;
 
 
-        private const string CausualTemplate = """
-    //CausalTemplate
-    MATCH (target:Event)
-    WHERE target.id IN $event_ids
-    MATCH (target)-[:OCCURRED_AT]->(p:Place)
+    //    private const string CausualTemplate = """
+    ////CausalTemplate
+    //MATCH (target:Event)
+    //WHERE target.id IN $event_ids
+    //MATCH (target)-[:OCCURRED_AT]->(p:Place)
 
-    MATCH (prev:Event)-[:OCCURRED_AT]->(p)
-    WHERE prev.datetime < target.datetime
+    //MATCH (prev:Event)-[:OCCURRED_AT]->(p)
+    //WHERE prev.datetime < target.datetime
 
-    OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(target)
-    OPTIONAL MATCH (prevActor:Actor)-[:INVOLVED_IN]->(prev)
+    //OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(target)
+    //OPTIONAL MATCH (prevActor:Actor)-[:INVOLVED_IN]->(prev)
 
-    RETURN target,
-           collect(DISTINCT prev) AS prior_events,
-           collect(DISTINCT a) AS target_actors,
-           collect(DISTINCT prevActor) AS prior_actors
-    ORDER BY target.datetime ASC
-    """;
+    //RETURN target,
+    //       collect(DISTINCT prev) AS prior_events,
+    //       collect(DISTINCT a) AS target_actors,
+    //       collect(DISTINCT prevActor) AS prior_actors
+    //ORDER BY target.datetime ASC
+    //""";
 
 
         private const string FallbackTemplate = """
     //FallbackTemplate
     MATCH (e:Event)
-    WHERE e.datetime >= $cutoff_datetime
+    //WHERE e.datetime >= $cutoff_datetime
     OPTIONAL MATCH (e)-[:OCCURRED_AT]->(p:Place)
     OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
     RETURN collect(DISTINCT e) AS events,
@@ -144,7 +208,7 @@ namespace ConflictChat2.Constants
             { "event_centric", EventCentricTemplate },
             { "predictive_place", PredictivePlaceTemplate },
             { "predictive_actor", PredictiveActorTemplate },
-            { "causual", CausualTemplate },
+          //  { "causual", CausualTemplate },
             { "fallback", FallbackTemplate }
         };
 
@@ -172,10 +236,9 @@ namespace ConflictChat2.Constants
             INTENT CATEGORIES (choose exactly one):
             - actor_centric        → Query focuses on an actor or group of actors.
             - place_centric        → Query focuses on a place, city, town, or country.
-            - event_centric        → Query focuses on a specific event or event type.
+            - event_centric        → Query focuses on a specific event or event type (e.g. riots, protests, battles, airstrikes, etc).
             - predictive_place     → Query asks about geographic place future risk, likelihood, trends.
-            - predictive_actor     → Query asks about actor future risk, likelihood, trends.
-            - causal               → Query asks “what led to…”, “why did…”, “what caused…”.
+            - predictive_actor     → Query asks about actor future risk, likelihood, trends, escalation between actors, etc.
             - fallback             → Query is vague, broad, or lacks identifiable entities.
 
             ENTITY EXTRACTION RULES:
@@ -196,7 +259,11 @@ namespace ConflictChat2.Constants
 
             Events:
               - Match any explicit event ID if present.
-              - If user refers to an event indirectly (“the bombing last week”), set event_id to null.
+              - If user refers to an event indirectly (“the bombing last week“), set event_id to null.
+
+            Event Summary Fragements:
+                - Match to the type of event being searched for.
+                - All values must be expressed in singular form (“airstrikes” -> “airstrike”; “protests” -> “protest”).
 
             Dates / Times:
               - Extract any explicit or implicit time expressions (“last month”, “recently”, “in six months”).
@@ -210,6 +277,7 @@ namespace ConflictChat2.Constants
                 "places": [ ... ],
                 "countries": [ ... ],
                 "event_ids": [ ... ],
+                "event_summary_fragments": [ ... ],
                 "dates": [ ... ]
               }
             }
