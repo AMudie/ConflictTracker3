@@ -55,9 +55,8 @@ namespace ConflictChat2.Constants
     MATCH (a:Actor)-[:INVOLVED_IN]->(e)
     WHERE size(actors) = 0 OR a.name IN actors
 
-    RETURN a,
-           collect(DISTINCT e) AS events,
-           collect(DISTINCT p) AS places
+    RETURN DISTINCT place,
+           collect(DISTINCT e) AS events
     
     
     """;
