@@ -109,6 +109,7 @@ namespace ConflictConsole.Classes
                             {
                                 Name = row["location"],
                                 Country = row["country"],
+                                //Load the lowest level parent from the found parents:
                                 ParentName = new[] { row["admin3"], row["admin2"], row["admin1"], row["country"] }
     .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
                                 Latitude = double.Parse(row["latitude"]),
@@ -269,7 +270,10 @@ namespace ConflictConsole.Classes
                     @event.Location = row["location"];
                     @event.Country = row["country"];
                     @event.DateTime = DateTime.TryParse(row["event_date"], out DateTime eventDate) ? eventDate : DateTime.MinValue;
-
+                    @event.Latitude = double.Parse(row["latitude"]);
+                    @event.Longitude = double.Parse(row["longitude"]);
+                    @event.GeoPrecision = int.Parse(row["geo_precision"]);
+                    @event.CivilainTargetting = !string.IsNullOrWhiteSpace(row["civilian_targeting"]);
                     List<string> actors = new List<string>();
 
                     if (row["actor1"] != null && !string.IsNullOrWhiteSpace(row["actor1"]))

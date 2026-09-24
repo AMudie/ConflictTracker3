@@ -88,11 +88,6 @@ while (true)
               reply = await llm.AskModelKGRAG(kgName, uri, username, password, userPrompt);
             }
 
-            ////Dump the final output to the console in cyan so it stands out from the user input.
-            //Console.ForegroundColor = ConsoleColor.Cyan;
-            //Console.WriteLine("ConflictChat: " + reply);
-            //Console.ResetColor();
-            //Console.WriteLine();
         }
     }
     catch (Exception ex)

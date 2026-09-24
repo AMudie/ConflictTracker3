@@ -28,7 +28,16 @@ namespace ConflictCommon.Classes.DTOs
 
         public int? Severity { get; set; }
 
-        public DateTime DateTime { get; set; } 
+        public DateTime DateTime { get; set; }
 
+        //Latitude and longitude are in decimal degrees, and GeoPrecision is an integer representing the precision of the coordinates (e.g., 1 for country-level, 2 for state-level, 3 for city-level, etc.)
+        //Latitude and Longitude are now replicated onto Events as per the ACLED data, this make identifying the actual locality easier as opposed to trying to match up to a Place by Country and Place name. 
+        public double Latitude { get; set; }
+
+        public double Longitude { get; set; }
+
+        public int GeoPrecision { get; set; }
+
+        public bool CivilainTargetting { get; set; }
     }
 }

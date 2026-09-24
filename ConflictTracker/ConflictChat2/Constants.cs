@@ -39,17 +39,22 @@ namespace ConflictChat2.Constants
     MATCH (root)<-[:WITHIN*0..]-(expandedPlace:Place)
     WHERE size($countries) = 0 OR expandedPlace.country IN $countries
 
-    WITH collect(DISTINCT expandedPlace) AS expandedPlaces, $actors AS actors, $places AS places, $countries AS countries
+    WITH collect(DISTINCT expandedPlace) AS expandedPlaces,
+         $actors AS actors,
+         $places AS places,
+         $countries AS countries,
+         $startDate AS startDate,
+         $endDate AS endDate
 
     // Match events occurring in the correct country
     MATCH (e:Event)-[:OCCURRED_AT]->(p:Place)
-    WHERE (p.country IN countries or size(countries) = 0)
+    WHERE (p.country IN countries OR size(countries) = 0)
 
-    // If places were specified, restrict events to expandedPlaces
-    AND (
-          size(places) = 0
-          OR p IN expandedPlaces
-        )
+    // Restrict events to expandedPlaces if places were specified
+    AND (size(places) = 0 OR p IN expandedPlaces)
+
+    // Filter events by datetime range
+    AND (datetime(e.datetime) >= datetime(startDate) AND datetime(e.datetime) <= datetime(endDate))
 
     // Match actors involved in those filtered events
     MATCH (a:Actor)-[:INVOLVED_IN]->(e)
@@ -62,22 +67,31 @@ namespace ConflictChat2.Constants
     """;
 
         private const string PlaceCentricTemplate = """
-    //Place centric template
+    // Place centric template
     MATCH (p:Place)
-    WHERE ((p.name IN $places OR size($places) = 0) AND (p.country IN $countries OR size($countries) = 0))
+    WHERE ((p.name IN $places OR size($places) = 0)
+       AND (p.country IN $countries OR size($countries) = 0))
 
     MATCH (child)-[:WITHIN]->(p)
     MATCH (p)<-[:WITHIN]-(parent)
 
     WITH collect(DISTINCT child) +
          collect(DISTINCT parent) +
-         collect (p) AS places
+         collect(p) AS places,
+         $startDate AS startDate,
+         $endDate AS endDate
 
     UNWIND places AS place
 
     MATCH (e:Event)-[:OCCURRED_AT]->(place)
 
-    RETURN DISTINCT place, collect(DISTINCT e) AS events
+    // Filter events by datetime range (inclusive)
+    WHERE datetime(e.datetime) >= datetime(startDate)
+      AND datetime(e.datetime) <= datetime(endDate)
+
+    RETURN DISTINCT place,
+           collect(DISTINCT e) AS events
+    
     """;
 
 
@@ -93,34 +107,34 @@ namespace ConflictChat2.Constants
         //""";
 
         private const string EventCentricTemplate = """
-
+        ///Event centric template
         // 1. Select root places based on optional filters
         MATCH (root:Place)
-        WHERE ((root.name IN $places OR size($places) = 0) AND (root.country IN $countries OR size($countries) = 0))
+        WHERE (size($places) = 0 OR root.name IN $places)
+          AND (size($countries) = 0 OR root.country IN $countries)
 
-        // 2. Traverse hierarchy up and down (all levels)
-        OPTIONAL MATCH(root)-[:WITHIN*0..]->(ancestor:Place)
-        OPTIONAL MATCH(descendant:Place)-[:WITHIN*0..]->(root)
-        
-        // 3. Combine all related places
-        WITH collect(DISTINCT root) +
-             collect(DISTINCT ancestor) +
-             collect(DISTINCT descendant) AS allPlaces,
-             $event_summary_fragments AS fragments
-        
-        // 4. Expand list into rows
-        UNWIND allPlaces AS place
-        
-        // 5. Match events at any of those places
-        MATCH(e:Event)-[:OCCURRED_AT]->(place)
-        
-        // 6. Filter events by summary fragments (case-insensitive)
-        WHERE ANY(fragment IN fragments
-                  WHERE toLower(e.summary) CONTAINS toLower(fragment)
-                    OR toLower(e.type) CONTAINS toLower(fragment)
-                    OR toLower(e.subtype) CONTAINS toLower(fragment))
-        
+        // 2. Traverse hierarchy in BOTH directions using a single pattern
+        MATCH (root)-[:WITHIN*0..]-(place:Place)
+
+        // 3. Match events early to eliminate irrelevant places and reduce the result set (fixes memory usage issue)
+        MATCH (e:Event)-[:OCCURRED_AT]->(place)
+        WHERE datetime(e.datetime) >= datetime($startDate)
+          AND datetime(e.datetime) <= datetime($endDate)
+
+        // 4. Filter by summary/type/subtype fragments (case-insensitive)
+        AND ANY(fragment IN $event_summary_fragments
+                WHERE toLower(e.summary) CONTAINS toLower(fragment)
+                   OR toLower(e.type) CONTAINS toLower(fragment)
+                   OR toLower(e.subtype) CONTAINS toLower(fragment))
+
+        // 5. Actor filtering (optional)
+        OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]->(e)
+        WHERE size($actors) = 0 OR a.name IN $actors
+
         RETURN DISTINCT e
+        
+        
+        
 
         """;
 

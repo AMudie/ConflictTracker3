@@ -192,18 +192,35 @@ namespace ConflictCommon.Classes.StaticHelpers
             return results;
         }
 
-        private List<(DateTime start, DateTime end)> LoadPeriods(DateTime startDate, DateTime endDate, string frequency)
+        /// <summary>
+        /// Generates a sequence of date ranges starting at <paramref name="startDate"/> and
+        /// continuing until <paramref name="endDate"/> (currently overridden for testing).
+        /// Each range represents a period whose length is determined by <paramref name="frequency"/>:
+        /// "Monthly" creates 28‑day periods, and "Quarterly" creates 84‑day periods.
+        /// </summary>
+        /// <param name="startDate">The initial date from which period generation begins.</param>
+        /// <param name="endDate">The final cutoff date for generating periods (overridden in method).</param>
+        /// <param name="frequency">Determines the size of each period: "Monthly" or "Quarterly".</param>
+        /// <returns>A list of (start, end) tuples representing each generated period.</returns>
+        /// <remarks>The last period shoudl always be removed, as this wil not be a full period of 28 or 84 days.</remarks>
+        private List<(DateTime start, DateTime end)> LoadPeriods(DateTime startDate, DateTime? endDate, string frequency)
         {
             List<(DateTime start, DateTime end)> periods = new List<(DateTime start, DateTime end)>();
             DateTime current = startDate;
+
+            if (endDate == null)
+            {
+                endDate = new DateTime(2025, 08, 29); //hardcoded end date for testing, as ACLED data ends on 09/08/2025. 
+            }
+           
 
             while (current <= endDate)
             {
                 var next = frequency switch
                 {
         
-                    "Monthly" => current.AddDays(28),
-                    "Quarterly" => current.AddMonths(84)
+                    "Monthly" => current.AddDays(28), //4 weeks
+                    "Quarterly" => current.AddDays(3 * 28) //12 weeks.
                 };
 
                 periods.Add((current, next));
@@ -221,7 +238,7 @@ namespace ConflictCommon.Classes.StaticHelpers
         /// <param name="startDate"></param>
         /// <param name="frequencyPeriod"></param>
         /// <returns>List of dictionary where keys are column names, values are values.</returns>
-        /// <remarks>CRITICAL: When training for classical ML, you MUST remove places within the place being trained for as the dataset will include these and is not aware of Place-WITHIN-PLACE relationships. Note also that Regional... features exlude the local features, and local features will include the WITHIN places. </remarks>
+        /// <remarks> Local events are defined based on places. The local events for place X are all the places OCCURRED_AT place X, plus events near to that place (10KM). That second part uses the event's location to the place, not any OCCURRED_AT place's location. Note also that some places are currently included which have 0 events. This does not automatically make them peaceful places, these are likely admin3-admin1 level places for which events are coded at a lower level.  </remarks>
         public async Task<List<Dictionary<string, string>>> BuildBaseLocalDatasetAsync(
     string kgName,
     string? placeName,
@@ -230,9 +247,10 @@ namespace ConflictCommon.Classes.StaticHelpers
         {
 
             var results = new List<Dictionary<string, string>>();
-           
 
-            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, new DateTime(2026, 07, 28), frequencyPeriod);
+            //ACLED data ends on 09/08/2025
+            //Need to remove the final period, as likely not a complete 28 days. 
+            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, endDate: null, frequencyPeriod);
 
 
             foreach (var period in periods)
@@ -241,154 +259,117 @@ namespace ConflictCommon.Classes.StaticHelpers
                 int beforeLoadCount = results.Count();
                 var parameters = new Dictionary<string, object>
                 {
-                    ["startDate"] = new LocalDate(period.start),//startDateStr,
-                    ["endDate"] = new LocalDate(period.end),
+                    ["periodStart"] = new LocalDateTime(period.start),//startDateStr,
+                    ["periodEnd"] = new LocalDateTime(period.end),
                     ["placeName"] = placeName,//,
-                    ["radiusKm"] = 50 * 1000 // Convert 50 km to meters for Neo4j distance function
+                    ["radiusKm"] = 10 // Convert 50 km to meters for Neo4j distance function
                 };
 
                 string cypher = @"
-WITH 
-    $startDate AS startDate,
-    $endDate AS endDate,
-    $placeName AS placeName,
-    $radiusKm AS radiusKm
+with
 
-// 1. Determine allowed places
-OPTIONAL MATCH (root:Place {name: placeName})
-OPTIONAL MATCH (root)-[:WITHIN*0..]->(child:Place)
-WITH startDate, endDate, placeName, radiusKm,
-     CASE WHEN placeName = '' THEN [] ELSE collect(child) END AS allowedPlaces
+$radiusKm as radiusKM, 
+$periodStart as periodStart, 
+$periodEnd as periodEnd,
+$placeName as placeName
 
-// 2. CROSS JOIN places (but filtered)
-MATCH (p:Place)
-WHERE placeName = '' OR p IN allowedPlaces
+//start with places as the root, just for the country and name
+match (rootPlace:Place)
+where (rootPlace.name = placeName or placeName = '' or placeName is null)
 
-WITH p, startDate, endDate, allowedPlaces, radiusKm
-
-// 3. Local events inside the period
-OPTIONAL MATCH (e:Event)-[:OCCURRED_AT]->(p)
-WHERE date(e.datetime) >= startDate AND date(e.datetime) < endDate
-
-OPTIONAL MATCH (actor:Actor)-[:INVOLVED_IN]->(e)
-
-WITH p, startDate, endDate, allowedPlaces, radiusKm,
-     e, actor,
-     e.type AS eventType,
-     e.subtype AS eventSubtype,
-     e.fatalities AS fatalities,
-     e.severity AS severity,
-     date(e.datetime) AS eventDate
-    
-
-// 4. Previous local events
-OPTIONAL MATCH (prevEvent:Event)-[:OCCURRED_AT]->(subPlace:Place)
-WHERE subPlace IN allowedPlaces
-  AND date(prevEvent.datetime) < startDate
-
-WITH p, startDate, endDate, allowedPlaces, radiusKm,
-     e, actor, eventType, eventSubtype, fatalities, severity,
-     collect(date(prevEvent.datetime)) AS prevDates
-
-WITH p, startDate, endDate, allowedPlaces, radiusKm,
-     e, actor, eventType, eventSubtype, fatalities, severity,
-     CASE
-         WHEN size(prevDates) = 0 THEN NULL
-         ELSE reduce(latest = prevDates[0], d IN prevDates |
-                     CASE WHEN d > latest THEN d ELSE latest END)
-     END AS lastEventDate
+//Get events that OCCURRED_AT those places, within the period
+with rootPlace, periodStart, periodEnd, radiusKM
+Optional match (rootPlace)<-[:OCCURRED_AT]-(rootEvent:Event)
+where rootEvent.datetime >= periodStart and rootEvent.datetime < periodEnd
 
 
-RETURN
-    p.name AS place, 
-    p.country AS country,
-    p.location.latitude AS latitude,
-    p.location.longitude AS longitude,
-    p.minBorderDistanceKm AS minBorderDistanceKm,
-    p.minCapitalDistanceKm AS minCapitalDistanceKm, 
-    startDate AS periodStart,
-    endDate AS periodEnd,
-    count(e) AS LocalEventCount,
-    count(DISTINCT actor) AS LocalUniqueActorCount,
-    count(DISTINCT eventType) AS LocalDistinctEventTypes,
-    count(DISTINCT eventSubtype) AS LocalDistinctEventSubtypes,
-    sum(fatalities) AS LocalTotalFatalities,
+//Disregard those event nodes, and just carry forward the collection of event Ids 
+with rootEvent, rootPlace, radiusKM, periodStart, periodEnd, collect (elementid(rootEvent)) as rootEventIds
+with rootPlace, radiusKM, periodStart, periodEnd, collect (elementid(rootEvent)) as rootEventIds
+Optional MATCH (rootEvents:Event)
+where elementId(rootEvents) in rootEventIds
+
+
+//Get events nearby those events (10KM)
+optional match (nearbyEvents:Event)
+where nearbyEvents.datetime >= periodStart and nearbyEvents.datetime < periodEnd
+and point.distance(nearbyEvents.location, rootEvents.location) < radiusKM * 1000
+and (elementid(nearbyEvents) in rootEventIds = FALSE)
+with rootPlace, radiusKM, periodStart, periodEnd, rootEventIds, collect(elementid(nearbyEvents)) as nearbyEventIds
+
+
+//We now have two collections of event Ids in rootEventIds and nearbyEventIds. 
+//Need to unwind then collect distinct to remove duplicates to avoid double counting. 
+
+//Now we can load the local events as nodes, and begin querying. 
+with 
+rootPlace, radiusKM, periodStart, periodEnd,  rootEventIds, nearbyEventIds, coll.distinct(rootEventIds + nearbyEventIds) as allEventIds
+optional MATCH(localEvents:Event)
+where elementId(localEvents) in allEventIds 
+
+//now load the actors associated with those events
+with rootPlace, radiusKM, periodStart, periodEnd,  rootEventIds, nearbyEventIds, allEventIds, localEvents
+Optional match (localActors:Actor)-[:INVOLVED_IN]->(localEvents)
+
+//Distinct the actors:
+with  rootPlace, periodStart, periodEnd, rootEventIds, nearbyEventIds, allEventIds, localEvents, collect(distinct localActors) as localActors
+
+
+
+with
+rootPlace, periodStart, periodEnd, 
+count(localEvents) as LocalEventCount,
+count(localActors) AS LocalDistinctActorCount,
+count(DISTINCT localEvents.type) AS LocalDistinctEventTypes,
+count(DISTINCT localEvents.subtype) AS LocalDistinctEventSubtypes,
+sum(localEvents.fatalities) AS LocalTotalFatalities,
     CASE 
-        WHEN count(severity) = 0 THEN NULL
-        ELSE sum(severity) * 1.0 / count(severity)
+        WHEN count(localEvents.severity) = 0 THEN NULL
+       ELSE sum(localEvents.severity) * 1.0 / count(localEvents.severity)
     END AS LocalAvgSeverity,
-    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Protesters""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalProtestersEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""State forces""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalStateForcesEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Political militia""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalPoliticalMilitiaEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Identity militia""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalIdentityMilitiaEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Rebel group""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalRebelGroupEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Rioters""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalRiotersEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""Civilians""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalCiviliansEventCount,
-	    count(
-        DISTINCT CASE 
-            WHEN EXISTS {
-                MATCH (:Actor {type: ""External/Other forces""})-[:INVOLVED_IN]->(e)
-            }
-            THEN e
-            ELSE NULL
-        END
-    ) AS LocalOtherTypeEventCount
+Sum(CASE 
+  WHEN ANY(a IN localActors WHERE a.type = ""Protesters"") 
+  THEN 1 
+  ELSE 0 
+END)AS LocalProtestersEventCount,
+Sum(CASE 
+  WHEN ANY(a IN localActors WHERE a.type = ""State forces"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalStateForcesEventCount,
+Sum(CASE
+  WHEN ANY(a IN localActors WHERE a.type = ""Political militia"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalPoliticalMilitiaEventCount,
+Sum(CASE 
+  WHEN ANY(a IN localActors WHERE a.type = ""Identity militia"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalIdentityMilitiaEventCount,
+Sum(CASE
+  WHEN ANY(a IN localActors WHERE a.type = ""Rebel group"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalRebelGroupEventCount,
+Sum(CASE
+  WHEN ANY(a IN localActors WHERE a.type = ""Rioters"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalRiotersEventCount,
+Sum(CASE
+  WHEN ANY(a IN localActors WHERE a.type = ""Civilians"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalCiviliansEventCount,
+Sum(CASE
+  WHEN ANY(a IN localActors WHERE a.type = ""External/Other forces"") 
+  THEN 1 
+  ELSE 0 
+END) AS LocalOtherTypeEventCount
+
+//return with aliases:
+return rootPlace.country as country, rootPlace.name as name, rootPlace.location.latitude as latitude, rootPlace.location.longitude as longitude, rootPlace.minBorderDistanceKm as minBorderDistanceKm, rootPlace.minCapitalDistanceKm as minCapitalDistanceKm, periodStart, periodEnd, LocalEventCount, LocalDistinctEventTypes, LocalDistinctEventSubtypes, LocalTotalFatalities, LocalDistinctActorCount, LocalAvgSeverity, LocalProtestersEventCount, LocalStateForcesEventCount, LocalPoliticalMilitiaEventCount,LocalIdentityMilitiaEventCount, LocalRebelGroupEventCount, LocalRiotersEventCount, LocalCiviliansEventCount, LocalOtherTypeEventCount
 
 ";
 
@@ -405,7 +386,7 @@ RETURN
                     var row = new Dictionary<string, string>
                     {
 
-                        ["place"] = record["place"].As<string>(),
+                        ["name"] = record["name"].As<string>(),
                         ["country"] = record["country"].As<string>(),
                         ["latitude"] = record["latitude"].As<string>(),
                         ["longitude"] = record["longitude"].As<string>(),
@@ -417,7 +398,7 @@ RETURN
                         ["periodEnd"] = record["periodEnd"].As<string>(),
 
                         ["LocalEventCount"] = Normalise(record["LocalEventCount"].As<string>()),
-                        ["LocalUniqueActorCount"] = Normalise(record["LocalUniqueActorCount"].As<string>()),
+                        ["LocalDistinctActorCount"] = Normalise(record["LocalDistinctActorCount"].As<string>()),
                         ["LocalDistinctEventTypes"] = Normalise(record["LocalDistinctEventTypes"].As<string>()),
                         ["LocalDistinctEventSubtypes"] = Normalise(record["LocalDistinctEventSubtypes"].As<string>()),
                         ["LocalTotalFatalities"] = Normalise(record["LocalTotalFatalities"].As<string>()),
@@ -443,7 +424,7 @@ RETURN
                 }
                 int afterLoadCount = results.Count();
                 
-                Console.WriteLine($"Loaded {beforeLoadCount} for {afterLoadCount} results; period: {period.start.ToString()} to {period.end.ToString()}");
+                Console.WriteLine($"Loaded {afterLoadCount - beforeLoadCount} for {afterLoadCount} local results; period: {period.start.ToString()} to {period.end.ToString()}");
                 session.Dispose();
             }
 
@@ -471,7 +452,7 @@ RETURN
             var results = new List<Dictionary<string, string>>();
 
 
-            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, new DateTime(2026, 07, 28), frequencyPeriod);
+            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, endDate:null, frequencyPeriod);
 
 
             foreach (var period in periods)
@@ -480,242 +461,76 @@ RETURN
                 int beforeLoadCount = results.Count();
                 var parameters = new Dictionary<string, object>
                 {
-                    ["startDate"] = new LocalDate(period.start),//startDateStr,
-                    ["endDate"] = new LocalDate(period.end),
-                    ["radiusKm"] = 50 * 1000 // Convert 50 km to meters for Neo4j distance function
+                    ["periodStart"] = new LocalDateTime(period.start),//startDateStr,
+                    ["periodEnd"] = new LocalDateTime(period.end),
+                    ["placeName"] = string.Empty,
+                    ["radiusKm"] = 50 // Convert 50 km to meters for Neo4j distance function
                 };
 
-                //string cypher = @"
-                //WITH 
-                //    $startDate AS startDate,
-                //    $endDate AS endDate,
-                //    $radiusKm AS radiusKm
-
-                //// 1. Get all events in the date range
-                //MATCH (e:Event)
-                //WHERE date(e.datetime) >= startDate
-                //  AND date(e.datetime) <  endDate
-                //MATCH (p:Place)<-[:OCCURRED_AT]-(e)
-
-                //// 2. Find regional places for each event's place
-                //MATCH (nearby:Place)
-                //WHERE nearby <> p
-                //  AND point.distance(p.location, nearby.location) <= radiusKm
-
-                //// 3. Regional events (only those in the date range)
-                //OPTIONAL MATCH (re:Event)-[:OCCURRED_AT]->(nearby)
-                //WHERE date(re.datetime) >= startDate
-                //  AND date(re.datetime) <  endDate
-
-                //OPTIONAL MATCH (regionalActor:Actor)-[:INVOLVED_IN]->(re)
-
-                //// 4. Aggregate by place
-                //WITH p, startDate, endDate,
-                //     count(DISTINCT re) AS RegionalEventCount,
-                //     count(DISTINCT regionalActor) AS RegionalActorCount,
-                //     count(DISTINCT re.type) AS RegionalDistinctEventTypes,
-                //     count(DISTINCT re.subtype) AS RegionalDistinctEventSubTypes,
-                //     sum(re.fatalities) AS RegionalTotalFatalities,
-                //     CASE
-                //         WHEN count(re.severity) = 0 THEN NULL
-                //         ELSE sum(re.severity) * 1.0 / count(re.severity)
-                //     END AS RegionalAvgSeverity,
-
-                //     // Count events involving different actor types:
-                // size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Protesters""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalProtestersEventCount,
-
-                // size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""State forces""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalStateForcesEventCount,
-
-                //  size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Political militia""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalPoliticalMilitiaEventCount,
-                //                   size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Identity militia""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalIdentityMilitiaEventCount,
-                //  size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Civilians""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalCiviliansEventCount,
-
-                //  size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Rebel group""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalRebelGroupEventCount,
-
-                //  size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""Rioters""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalRiotersEventCount,
-
-                //  size([
-                //     ev IN collect(DISTINCT re) WHERE
-                //     EXISTS {
-                //         MATCH (:Actor {type: ""External/Other forces""})-[:INVOLVED_IN]->(ev)
-                //     }
-                // ]) AS RegionalOtherTypeEventCount
-
-                //RETURN
-                //    p.name AS place,
-                //    p.country as country,
-                //    startDate AS periodStart,
-                //    endDate AS periodEnd,
-                //    RegionalEventCount,
-                //    RegionalActorCount,
-                //    RegionalDistinctEventTypes,
-                //    RegionalDistinctEventSubTypes,
-                //    RegionalTotalFatalities,
-                //    RegionalAvgSeverity,
-                //    RegionalProtestersEventCount,
-                //    RegionalStateForcesEventCount,
-                //    RegionalPoliticalMilitiaEventCount,
-                //    RegionalIdentityMilitiaEventCount,
-                //    RegionalCiviliansEventCount,
-                //    RegionalRebelGroupEventCount,
-                //    RegionalRiotersEventCount,
-                //    RegionalOtherTypeEventCount
-                //ORDER BY place;
-
-                //";
-
                 string cypher = @"
-                WITH 
-                    $startDate AS startDate,
-                    $endDate AS endDate,
-                    $radiusKm AS radiusKm
 
-                // 1. Get all events in the date range
+with
 
-MATCH (p:Place)
+$radiusKm as radiusKM, 
+$periodStart as periodStart, 
+$periodEnd as periodEnd,
+$placeName as placeName
 
-OPTIONAL MATCH (e:Event)-[:OCCURRED_AT]->(p)
-WHERE date(e.datetime) >= startDate 
-  AND date(e.datetime) < endDate
+//start with places as the root, just for the country and name
+match (rootPlace:Place)
+where (rootPlace.name = placeName or placeName = '' or placeName is null)
+
+//Get events that OCCURRED_AT those places, within the period
+with rootPlace, periodStart, periodEnd, radiusKM
+Optional match (rootPlace)<-[:OCCURRED_AT]-(regionalEvents:Event)
+where 
+(
+regionalEvents is null 
+or ((regionalEvents.datetime >= periodStart 
+and regionalEvents.datetime < periodEnd)
+and (point.distance(regionalEvents.location, rootPlace.location) >= 10000 
+and 
+point.distance(regionalEvents.location, rootPlace.location) < radiusKM * 1000))
+)
 
 
-                // 2. Find regional places for each event's place
-                WITH p, e, startDate, endDate, radiusKm
-MATCH (nearby:Place)
-                WHERE nearby <> p
-                  AND point.distance(p.location, nearby.location) <= radiusKm
 
-                // 3. Regional events (only those in the date range)
-                OPTIONAL MATCH (re:Event)-[:OCCURRED_AT]->(nearby)
-                WHERE date(re.datetime) >= startDate
-                  AND date(re.datetime) <  endDate
+//now load the regional actors for those events. 
+with rootPlace, periodStart, periodEnd, radiusKM, regionalEvents
+optional match  (regionalActors:Actor)-[:INVOLVED_IN]->(regionalEvents)
 
-                OPTIONAL MATCH (regionalActor:Actor)-[:INVOLVED_IN]->(re)
+with rootPlace, periodStart, periodEnd, radiusKM, collect(distinct regionalEvents) as regionalEvents, collect(distinct regionalActors) as regionalActors
 
-                // 4. Aggregate by place
-                WITH p, startDate, endDate,
-                     count(DISTINCT re) AS RegionalEventCount,
-                     count(DISTINCT regionalActor) AS RegionalActorCount,
-                     count(DISTINCT re.type) AS RegionalDistinctEventTypes,
-                     count(DISTINCT re.subtype) AS RegionalDistinctEventSubTypes,
-                     sum(re.fatalities) AS RegionalTotalFatalities,
-                     CASE
-                         WHEN count(re.severity) = 0 THEN NULL
-                         ELSE sum(re.severity) * 1.0 / count(re.severity)
-                     END AS RegionalAvgSeverity,
+with rootPlace, periodStart, periodEnd, radiusKM, regionalEvents, regionalActors
 
-                     // Count events involving different actor types:
-                 size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Protesters""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalProtestersEventCount,
+with rootPlace, periodStart, periodEnd,  collect(distinct regionalEvents) as regionalEvents, regionalActors,
+size(regionalEvents) as RegionalEventCount,
+size(regionalActors) AS RegionalDistinctActorCount,
+size(coll.distinct([e IN regionalEvents | e.type]))AS RegionalDistinctEventTypes,
+size(coll.distinct([e IN regionalEvents | e.subtype])) AS RegionalDistinctEventSubTypes,
+reduce(total = 0, e IN regionalEvents | total + coalesce(e.fatalities, 0))
+    AS RegionalTotalFatalities,
+CASE 
+    WHEN size([e IN regionalEvents WHERE e.severity IS NOT NULL]) = 0 THEN 0
+    ELSE reduce(total = 0, e IN regionalEvents | total + coalesce(e.severity, 0)) * 1.0 /
+         size([e IN regionalEvents WHERE e.severity IS NOT NULL])
+END AS RegionalAvgSeverity,
+size([a IN regionalActors WHERE a.type = ""Protesters""]) AS RegionalProtestersEventCount,
+size([a IN regionalActors WHERE a.type = ""State forces""]) AS RegionalStateForcesEventCount,
+size([a IN regionalActors WHERE a.type = ""Political militia""]) AS RegionalPoliticalMilitiaEventCount,
+size([a IN regionalActors WHERE a.type = ""Identity militia""]) AS RegionalIdentityMilitiaEventCount,
+size([a IN regionalActors WHERE a.type = ""Rebel group""]) AS RegionalRebelGroupEventCount,
+size([a IN regionalActors WHERE a.type = ""Rioters""]) AS RegionalRiotersEventCount,
+size([a IN regionalActors WHERE a.type = ""Civilians""]) AS RegionalCiviliansEventCount,
+size([a IN regionalActors WHERE a.type = ""External/Other forces""]) AS RegionalOtherTypeEventCount
 
-                 size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""State forces""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalStateForcesEventCount,
 
-                  size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Political militia""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalPoliticalMilitiaEventCount,
-                                   size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Identity militia""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalIdentityMilitiaEventCount,
-                  size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Civilians""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalCiviliansEventCount,
+//return with aliases:
+return rootPlace.country as country, rootPlace.name as name, rootPlace.location.latitude as latitude, rootPlace.location.longitude as longitude, periodStart, periodEnd, RegionalEventCount, RegionalDistinctEventTypes, RegionalDistinctEventSubTypes, RegionalTotalFatalities, RegionalDistinctActorCount, RegionalAvgSeverity, RegionalProtestersEventCount, RegionalStateForcesEventCount, RegionalPoliticalMilitiaEventCount,RegionalIdentityMilitiaEventCount, RegionalRebelGroupEventCount, RegionalRiotersEventCount, RegionalCiviliansEventCount, RegionalOtherTypeEventCount
 
-                  size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Rebel group""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalRebelGroupEventCount,
 
-                  size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""Rioters""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalRiotersEventCount,
 
-                  size([
-                     ev IN collect(DISTINCT re) WHERE
-                     EXISTS {
-                         MATCH (:Actor {type: ""External/Other forces""})-[:INVOLVED_IN]->(ev)
-                     }
-                 ]) AS RegionalOtherTypeEventCount
 
-                RETURN
-                    p.name AS place,
-                    p.country as country,
-                    startDate AS periodStart,
-                    endDate AS periodEnd,
-                    p.minBorderDistanceKm AS minBorderDistanceKm,
-                    p.minCapitalDistanceKm AS minCapitalDistanceKm, 
-                    RegionalEventCount,
-                    RegionalActorCount,
-                    RegionalDistinctEventTypes,
-                    RegionalDistinctEventSubTypes,
-                    RegionalTotalFatalities,
-                    RegionalAvgSeverity,
-                    RegionalProtestersEventCount,
-                    RegionalStateForcesEventCount,
-                    RegionalPoliticalMilitiaEventCount,
-                    RegionalIdentityMilitiaEventCount,
-                    RegionalCiviliansEventCount,
-                    RegionalRebelGroupEventCount,
-                    RegionalRiotersEventCount,
-                    RegionalOtherTypeEventCount
-                ORDER BY place;
 
                 ";
 
@@ -733,10 +548,10 @@ MATCH (nearby:Place)
                     var row = new Dictionary<string, string>
                     {
 
-                        ["place"] = record["place"].As<string>(),
+                        ["name"] = record["name"].As<string>(),
                         ["country"] = record["country"].As<string>(),
-                        ["minBorderDistanceKm"] = record["minBorderDistanceKm"].As<string>(),
-                        ["minCapitalDistanceKm"] = record["minCapitalDistanceKm"].As<string>(),
+                        //["minBorderDistanceKm"] = record["minBorderDistanceKm"].As<string>(),
+                       // ["minCapitalDistanceKm"] = record["minCapitalDistanceKm"].As<string>(),
 
                         ["periodStart"] = record["periodStart"].As<string>(),
                         ["periodEnd"] = record["periodEnd"].As<string>(),
@@ -745,7 +560,7 @@ MATCH (nearby:Place)
 
                      //   ["PlacesWithinRegion"] = Normalise(record["PlacesWithinRegion"].As<string>()),
                         ["RegionalEventCount"] = Normalise(record["RegionalEventCount"].As<string>()),
-                        ["RegionalActorCount"] = Normalise(record["RegionalActorCount"].As<string>()),
+                        ["RegionalDistinctActorCount"] = Normalise(record["RegionalDistinctActorCount"].As<string>()),
                         ["RegionalDistinctEventTypes"] = Normalise(record["RegionalDistinctEventTypes"].As<string>()),
                         ["RegionalDistinctEventSubTypes"] = Normalise(record["RegionalDistinctEventSubTypes"].As<string>()),
                         ["RegionalTotalFatalities"] = Normalise(record["RegionalTotalFatalities"].As<string>()),
@@ -767,7 +582,7 @@ MATCH (nearby:Place)
                 }
                 int afterLoadCount = results.Count();
 
-                Console.WriteLine($"Loaded {beforeLoadCount} for {afterLoadCount} results; period: {period.start.ToString()} to {period.end.ToString()}");
+                Console.WriteLine($"Loaded {afterLoadCount - beforeLoadCount} for {afterLoadCount} regional results; period: {period.start.ToString()} to {period.end.ToString()}");
                 session.Dispose();
             }
 

@@ -2,6 +2,7 @@
 using ConflictCommon.Classes.StaticHelpers;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -14,7 +15,7 @@ namespace ConflictCalc.StaticHelpers
 
         //builddataset -placeName Khartoum -startDate 20200101 -frequencyPeriod Monthly
         //builddataset -kgname sudan -placeName -startDate 20200101 -frequencyPeriod Monthly
-        //builddataset -kgname eastafrica -placeName -startDate 20150101 -frequencyPeriod Monthly
+        //builddataset -kgname eastafrica3 -placeName -startDate 20150101 -frequencyPeriod Monthly
 
         //<summary>Builds a dataset based on the provided parameters, and opens it.</summary>
         public static void BuildDataset(Dictionary<string, string> flags)
@@ -109,13 +110,16 @@ namespace ConflictCalc.StaticHelpers
                 Console.WriteLine($"Dataset size: {datasetBase.Count()} records.");
                 Console.ResetColor();
 
+                //example date string: "2015-01-01T00:00:00"
+
                 // Determine the min and max years from the dataset for building the fact dataset
-                int minYear = datasetBase.Select(row => DateTime.ParseExact(row["periodStart"], "yyyy-MM-dd", CultureInfo.InvariantCulture).Year).Min();
-                int maxYear = datasetBase.Select(row => DateTime.ParseExact(row["periodStart"], "yyyy-MM-dd", CultureInfo.InvariantCulture).Year).Max();
+                int minYear = datasetBase.Select(row => DateTime.ParseExact(row["periodStart"], "yyyy-MM-ddT00:00:00", CultureInfo.InvariantCulture).Year).Min();
+                
+                int maxYear = datasetBase.Select(row => DateTime.ParseExact(row["periodStart"], "yyyy-MM-ddT00:00:00", CultureInfo.InvariantCulture).Year).Max();//always assign facts based on periodStart, if the period extends over a year boundary, we don't care.
 
                 // Load facts for the dataset. We'll get creating and pivot for the joining to the base dataset via year and country.
                 List<Dictionary<string, string>> datasetFacts = service.BuildFactDataset(kgName, "", minYear, maxYear).Result;
-                if (datasetFacts != null)
+                if (datasetFacts != null && datasetFacts.Count > 0)
                 {
                     MergeFactsIntoDataset(ref datasetBase, ref datasetFacts);
                     Console.ForegroundColor = ConsoleColor.Yellow;
@@ -277,7 +281,7 @@ namespace ConflictCalc.StaticHelpers
             foreach (var row in datasetBase)
             {
                 var country = row["country"];
-                var year = DateTime.ParseExact(row["periodStart"], "yyyy-MM-dd", CultureInfo.InvariantCulture).Year;
+                var year = DateTime.ParseExact(row["periodStart"], "yyyy-MM-ddT00:00:00", CultureInfo.InvariantCulture).Year;
 
                 var key = (country, year);
 
@@ -334,82 +338,96 @@ namespace ConflictCalc.StaticHelpers
             ref List<Dictionary<string, string>> datasetLocal,
             ref List<Dictionary<string, string>> datasetRegional)
         {
-            // Build an index for fast lookup: (country, place, periodStart) → list of dataset rows
-            var datasetIndex = new Dictionary<(string country, string place, string periodStart), List<Dictionary<string, string>>>();
 
-            foreach (var row in datasetLocal)
+            try
             {
-                var country = row["country"];
-                var place = row["place"];
-                var periodStart = row["periodStart"];   // NEW: include periodStart
 
-                var key = (country, place, periodStart);
+                // Build an index for fast lookup: (country, place, periodStart) → list of dataset rows
+                var datasetIndex = new Dictionary<(string country, string place, string periodStart), List<Dictionary<string, string>>>();
 
-                if (!datasetIndex.TryGetValue(key, out var list))
+                foreach (var row in datasetLocal)
                 {
-                    list = new List<Dictionary<string, string>>();
-                    datasetIndex[key] = list;
-                }
-
-                list.Add(row);
-            }
-
-            // Build regional index using same composite key
-            var regionalIndex = new Dictionary<(string country, string place, string periodStart), Dictionary<string, string>>();
-
-            if (datasetRegional != null)
-            {
-                foreach (var regionalRecord in datasetRegional)
-                {
-                    var country = regionalRecord["country"];
-                    var place = regionalRecord["place"];
-                    var periodStart = regionalRecord["periodStart"];
+                    var country = row["country"];
+                    var place = row["name"];
+                    var periodStart = row["periodStart"];
 
                     var key = (country, place, periodStart);
-                    regionalIndex[key] = regionalRecord;
-                }
-            }
 
-            // Determine which regional fields exist (excluding join keys)
-            var regionalFields = new HashSet<string>();
-            if (datasetRegional != null && datasetRegional.Count > 0)
-            {
-                foreach (var kvp in datasetRegional[0])
-                {
-                    if (kvp.Key.Trim().ToUpper().StartsWith("REGIONAL"))
+                    if (!datasetIndex.TryGetValue(key, out var list))
                     {
-                        regionalFields.Add(kvp.Key);
+                        list = new List<Dictionary<string, string>>();
+                        datasetIndex[key] = list;
+                    }
+
+                    list.Add(row);
+                }
+
+                // Build regional index using same composite key
+                var regionalIndex = new Dictionary<(string country, string place, string periodStart), Dictionary<string, string>>();
+
+                if (datasetRegional != null)
+                {
+                    foreach (var regionalRecord in datasetRegional)
+                    {
+                        var country = regionalRecord["country"];
+                        var place = regionalRecord["name"];
+                        var periodStart = regionalRecord["periodStart"];
+
+                        var key = (country, place, periodStart);
+                        regionalIndex[key] = regionalRecord;
                     }
                 }
-            }
 
-            // Merge regional values into local dataset
-            foreach (var row in datasetLocal)
-            {
-                var country = row["country"];
-                var place = row["place"];
-                var periodStart = row["periodStart"];
-
-                var key = (country, place, periodStart);
-
-                if (regionalIndex.TryGetValue(key, out var regionalRecord))
+                // Determine which regional fields exist (excluding join keys)
+                var regionalFields = new HashSet<string>();
+                if (datasetRegional != null && datasetRegional.Count > 0)
                 {
-                    // Copy regional fields
-                    foreach (var field in regionalFields)
+                    foreach (var kvp in datasetRegional[0])
                     {
-                        row[field] = regionalRecord[field];
+                        if (kvp.Key.Trim().ToUpper().StartsWith("REGIONAL"))
+                        {
+                            regionalFields.Add(kvp.Key);
+                        }
                     }
                 }
-                else
+
+                Console.WriteLine("Merging regional values...");
+                // Merge regional values into local dataset
+                foreach (var row in datasetLocal)
                 {
-                    // No regional record → fill defaults
-                    foreach (var field in regionalFields)
+                  
+                    var country = row["country"];
+                    var place = row["name"];
+                    var periodStart = row["periodStart"];
+
+                    var key = (country, place, periodStart);
+
+                    if (regionalIndex.TryGetValue(key, out var regionalRecord))
                     {
-                      
+                        // Copy regional fields
+                        foreach (var field in regionalFields)
+                        {
+                            row[field] = regionalRecord[field];
+                        }
+                    }
+                    else
+                    {
+                        // No regional record → fill defaults
+                        foreach (var field in regionalFields)
+                        {
+
                             row[field] = "0";   // Default value
-                        
+
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Error on MergeRegionalIntoLocalDataset(): " + ex.Message + Environment.NewLine + "Stack trace: " + ex.StackTrace);
+                Console.ResetColor();
+                throw (ex);
             }
         }
 

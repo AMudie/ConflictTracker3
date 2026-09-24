@@ -1,6 +1,7 @@
 ﻿using ConflictCommon.Classes.DTOs;
 using ConflictConsole.Classes;
 using Neo4j.Driver;
+using NetTopologySuite.Mathematics;
 using System.Data;
 using System.Diagnostics;
 using System.Numerics;
@@ -56,8 +57,6 @@ namespace ConflictConsole.StaticHelpers
 
                 await using var session = driver.AsyncSession(o => o.WithDatabase(databaseName));
 
-
-
                 int index = 0;
 
                 foreach (GeographicalPlace place in places)
@@ -65,7 +64,8 @@ namespace ConflictConsole.StaticHelpers
                     // Create or update the place node with a spatial point
                     var cypher = @"
             MERGE (p:Place { name: $name })
-            SET p.location = point({ latitude: $lat, longitude: $lon }),
+            SET 
+            p.location = point({ latitude: $lat, longitude: $lon }),
             p.country   = $country,
             p.isCapital = $isCapital    
         ";
@@ -94,7 +94,7 @@ namespace ConflictConsole.StaticHelpers
 
 
                 // Ensure spatial index exists
-                await EnsureSpatialIndexAsync(session);
+                await EnsureSpatialIndexAsync(session, "PLACE");
 
             }
             catch (Exception ex)
@@ -254,17 +254,26 @@ string password, List<string> countries)
             }
         }
         /// <summary>
-        /// Create the WGS‑84 spatial index
+        /// Create the WGS‑84 spatial index, this makes spatial queries on the location property of Place and Event nodes much faster.
         /// </summary>
         /// <param name="session"></param>
         public static async Task EnsureSpatialIndexAsync(
-    IAsyncSession session)
+    IAsyncSession session, string nodeType)
         {
-            var cypher = @"
-CREATE POINT INDEX place_location_index
-FOR (p:Place)
-ON (p.location);
-    ";
+            var cypher = "";
+            if (nodeType == "PLACE")
+            {
+                cypher = @"
+                CREATE POINT INDEX place_location_index
+                FOR (p:Place)
+                ON (p.location);";
+            }
+            else if (nodeType == "EVENT")
+            {
+                cypher = @"CREATE POINT INDEX event_location_index
+                FOR(e:Event)
+                ON(e.location);";
+            }
 
             await session.RunAsync(cypher);
         }
@@ -416,7 +425,7 @@ ON (p.location);
 
                 foreach (Event ev in events)
                 {
-                    // 1. Create or update the Event node (unique by ID)
+                    // Create or update the Event node (unique by ID)
                     var eventCypher = @"
             MERGE (e:Event { id: $id })
             SET e.summary      = $summary,
@@ -428,7 +437,10 @@ ON (p.location);
                 e.fatalities   = $fatalities,
                 e.datetime     = $datetime,
                 e.severity     = $severity,
-                e.country      = $country
+                e.country      = $country,
+                e.location     = point({ latitude: $lat, longitude: $lon }),
+                e.geoprecision = $geoprecision,
+                e.civilianTargetting = $civilianTargetting
         ";
 
                     var eventParams = new
@@ -443,49 +455,15 @@ ON (p.location);
                         fatalities = ev.Fatalities,
                         datetime = ev.DateTime,
                         severity = ev.Severity,
-                        country = ev.Country
+                        country = ev.Country,
+                        lat = ev.Latitude,
+                        lon = ev.Longitude,
+                        geoprecision = ev.GeoPrecision,
+                        civilianTargetting = ev.CivilainTargetting
+
                     };
 
                     await session.RunAsync(eventCypher, eventParams);
-
-                    //    // 2. Link Event -> Place (existing Place by name)
-                    //    if (!string.IsNullOrWhiteSpace(ev.Location))
-                    //    {
-                    //        var placeCypher = @"
-                    //    MATCH (e:Event { id: $eventId })
-                    //    MATCH (p:Place { name: $placeName })
-                    //    MERGE (e)-[:OCCURRED_AT]->(p)
-                    //";
-
-                    //        var placeParams = new
-                    //        {
-                    //            eventId = ev.ID,
-                    //            placeName = ev.Location.Trim()
-                    //        };
-
-                    //        await session.RunAsync(placeCypher, placeParams);
-                    //    }
-
-                    //    // 3. Link Event -> Actors (existing Actor by name)
-                    //    if (ev.Actors != null)
-                    //    {
-                    //        foreach (var actorName in ev.Actors.Where(a => !string.IsNullOrWhiteSpace(a)))
-                    //        {
-                    //            var actorCypher = @"
-                    //        MATCH (e:Event { id: $eventId })
-                    //        MATCH (a:Actor { name: $actorName })
-                    //        MERGE (a)-[:INVOLVED_IN]->(e)
-                    //    ";
-
-                    //            var actorParams = new
-                    //            {
-                    //                eventId = ev.ID,
-                    //                actorName = actorName.Trim()
-                    //            };
-
-                    //            await session.RunAsync(actorCypher, actorParams);
-                    //        }
-                    //    }
 
                     index++;
 
@@ -495,7 +473,12 @@ ON (p.location);
                         Console.WriteLine($"Saved event {index} of {events.Count()}");
                         Console.ResetColor();
                     }
+
+               
                 }
+
+                // Ensure spatial index exists
+                //await EnsureSpatialIndexAsync(session, "EVENT");
             }
             catch (Exception ex)
             {
