@@ -4,6 +4,7 @@ using Microsoft.Recognizers.Text.NumberWithUnit.Chinese;
 using Neo4j.Driver;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http.Json;
@@ -13,6 +14,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using static ConflictChat2.Classes.ConflictQueryClient;
 using static ConflictCommon.Classes.StaticHelpers.Neo4jQueryService;
 using static Microsoft.Recognizers.Text.DataTypes.TimexExpression.Resolution;
 using static System.Net.WebRequestMethods;
@@ -48,7 +50,7 @@ namespace ConflictChat2.Classes
         /// </summary>
         /// <param name="memories"></param>
         /// <returns></returns>
-        private string BuildPrompt(bool reduceContextMessages = false, List<string>? facts = null)
+        private string BuildPrompt(bool reduceContextMessages = false, List<string>? facts = null, string? predictions = null)
         {
             var sb = new System.Text.StringBuilder();
 
@@ -74,6 +76,15 @@ namespace ConflictChat2.Classes
                 {
                     sb.AppendLine($"•{fact}");
                 }
+            }
+
+
+            //predictions are the block of text from the ML api (i.e. the lightgbm/chronos2 models):
+            if (!string.IsNullOrEmpty(predictions))
+            {
+                sb.AppendLine(predictions);
+                sb.AppendLine("Evaluate if the evidence supports these predictions.");
+
             }
 
 
@@ -113,27 +124,27 @@ namespace ConflictChat2.Classes
         public async Task<string> AskModelKGRAG(string kgName, string uri, string username, string password, string userPrompt)
         {
 
-//1.User Query
-//    ↓
-//2.LLM: Intent + Entity Extraction
-//    ↓
-//3.LLM: Intent Classification
-//    ↓
-//4.LLM: JSON Query Plan
-//    ↓
-//5.Backend: Cypher Template Assembly
-//    ↓
-//6.Backend: Cypher Validation
-//    ↓
-//7.Neo4j: Execute Query
-//    ↓
-//8.Backend: Relevance Filtering
-//    ↓
-//9.LLM: Analysis + Prediction
-//    ↓
-//10.Short - term Memory Update
-//    ↓
-//11.Final Answer to User
+            //1.User Query
+            //    ↓
+            //2.LLM: Intent + Entity Extraction
+            //    ↓
+            //3.LLM: Intent Classification
+            //    ↓
+            //4.LLM: JSON Query Plan
+            //    ↓
+            //5.Backend: Cypher Template Assembly
+            //    ↓
+            //6.Backend: Cypher Validation
+            //    ↓
+            //7.Neo4j: Execute Query
+            //    ↓
+            //8.Backend: Relevance Filtering
+            //    ↓
+            //9.LLM: Analysis + Prediction
+            //    ↓
+            //10.Short - term Memory Update
+            //    ↓
+            //11.Final Answer to User
 
 
             //add the user's query to the STM:
@@ -207,26 +218,69 @@ namespace ConflictChat2.Classes
                  .EnumerateArray()
                  .Select(x => x.GetString())
                  .ToList());
-                    parameters.Add("event_ids", root.GetProperty("entities")
-                 .GetProperty("event_ids")
-                 .EnumerateArray()
-                 .Select(x => x.GetString())
-                 .ToList());
+                    //   parameters.Add("event_ids", root.GetProperty("entities")
+                    //.GetProperty("event_ids")
+                    //.EnumerateArray()
+                    //.Select(x => x.GetString())
+                    //.ToList());
                     parameters.Add("event_summary_fragments", root.GetProperty("entities")
        .GetProperty("event_summary_fragments")
        .EnumerateArray()
        .Select(x => x.GetString())
        .ToList());
-                    //   parameters.Add("dates", root.GetProperty("entities")
-                    //.GetProperty("dates")
-                    //.EnumerateArray()
-                    //.Select(x => x.GetString())
-                    //.ToList());
-                    parameters.Add("dates", root.GetProperty("entities")
-                 .GetProperty("dates")
-                 .EnumerateArray()
-                 .Select(x => x.GetString())
-                 .ToList());
+
+
+                    //Extract date ranges from the user prompt using NLPTimeExtractor:
+                    List<(DateTime Start, DateTime End)> dateRanges = NLPTimeExtractor.ExtractDateRanges(userPrompt);
+                    if (dateRanges.Count == 1)
+                    {
+                        parameters.Add("startDate", dateRanges.First().Start);
+                        //Add a day, then subtract to get the moment before midnight. This makes life easier for consistent filtering. 
+                        parameters.Add("endDate", dateRanges.First().End.AddTicks(-1));
+                    }
+                    else
+                    {
+                        parameters.Add("startDate", DateTime.MinValue);
+                        parameters.Add("endDate", DateTime.Now);
+                    }
+
+                    string predictions = "";
+                    if (intent == "predictive_place")
+                    {
+                        if ((parameters["countries"] != null && ((List<string>)parameters["countries"]).Count == 1 &&
+                (parameters["places"] != null && ((List<string>)parameters["places"]).Count == 1) &&
+                    (parameters["startDate"] != null && ((List<string>)parameters["startDate"]).Count == 1)))
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine("predictive_place intent identified, making predictions (this can take a long time for chronos2 models...)");
+                            Console.ResetColor();
+                        }
+
+
+                        ConflictRequest request = new ConflictRequest();
+
+                        if (parameters["countries"] != null)
+                        {
+                            request.Country = ((List<string>)parameters["countries"]).FirstOrDefault();
+                            //request.Country = "South Sudan";
+                        }
+
+                        if (parameters["places"] != null)
+                        {
+                            request.Place = ((List<string>)parameters["places"]).FirstOrDefault();
+                            // request.Place = "Aduel";
+                        }
+
+                        if (parameters["startDate"] != null)
+                        {
+                            request.PeriodStart = DateOnly.Parse(((List<string>)parameters["startDate"]).FirstOrDefault());
+
+                        }
+
+
+
+                        predictions = ConflictQueryClient.QueryConflict(baseUrl: null, request);
+                    }
 
 
 
@@ -254,7 +308,7 @@ namespace ConflictChat2.Classes
                     //set the system prompt for the actual query:
                     SetSystemPrompt(Constants.Constants.systemPromptGeneric);
 
-                    string promptForQuery = BuildPrompt(false, facts);
+                    string promptForQuery = BuildPrompt(false, facts, predictions);
 
                     //Make the request to the model:
                     var queryPrompt = await _http.PostAsJsonAsync("/api/generate", new
@@ -351,7 +405,7 @@ namespace ConflictChat2.Classes
                     Console.ResetColor();
                     continue;
                 }
-          
+
 
                 foreach (var ev in events)
                 {

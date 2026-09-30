@@ -1,56 +1,185 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
+from fastapi import FastAPI, HTTPException #FastAPI allows this file to be run as an HTTP web server (with the Swagger UI at /docs)
+from fastmcp import FastMCP #MCP server (In the same file!)
+from pydantic import BaseModel, Field #class structure validation (BaseModel)
+from datetime import datetime #timestamps
 import joblib #for pickle files. 
-import sklearn
 import os #file system access
-import pandas as pd
+import pandas as pd #dataframes
 import re #regular expressions
-from chronos import Chronos2Pipeline
-import sys
+from chronos import Chronos2Pipeline #chronos 2 predictions
+import sys 
+from typing import Literal #tighter structure around the ConflictResponse class
 
+#fastapi setup:
+app = FastAPI() #create the FastAPI webserver
 
-app = FastAPI()
+#fastmcp setup:
+mcp = FastMCP("conflict-query") #create the MCP Json-RPC server
 
 #Global Variables:
 #http path: http://localhost:8000/docs
 
-#Original endpoint to confirm functionality
-class Query(BaseModel):
-    place: str
-    country: str
-    periodStart: datetime
+#region "heartbeat" functionality
 
-@app.post("/predict_basic")
-def predict_basic(q: Query):
-    # Your original logic stays here
-    return {
-        "place": q.place,
-        "country": q.country,
-        "periodStart": q.periodStart.isoformat(),
-        "prediction": "example"
-    }
+#heartbeats do not need to be available to the MCP server. 
+
+class FunctionalityCheckRequest(BaseModel):
+    place: str = Field(
+        description="Any valid place name. Used only to confirm JSON deserialization.",
+        examples=["Nairobi"]
+    )
+
+    country: str = Field(
+        description="Any country string. This endpoint does not validate allowed values.",
+        examples=["Kenya"]
+    )
+
+    periodStart: datetime = Field(
+        description="Any ISO 8601 datetime. Confirms datetime parsing works.",
+        examples=["2024-01-01T00:00:00"]
+    )
 
 
+class FunctionalityCheckResponse(BaseModel):
+    status: str = Field(
+        description="Always 'ok' if the endpoint is functioning.",
+        examples=["ok"]
+    )
 
-#conflictquery enddpoint designed for c# consumption:
+    echo: dict = Field(
+        description="Echo of the request payload to confirm correct parsing.",
+        examples=[{
+            "place": "Nairobi",
+            "country": "Kenya",
+            "periodStart": "2024-01-01T00:00:00"
+        }]
+    )
+
+#This is the actual endpoint for the heartbeat. Note the lack of MCP decoration!
+@app.post("/functionality-check", response_model=FunctionalityCheckResponse)
+def functionality_check(req: FunctionalityCheckRequest):
+    """
+    Lightweight endpoint to confirm the API is reachable and functioning.
+
+    Returns:
+    - status: always "ok"
+    - echo: the exact request payload, confirming JSON parsing and datetime handling
+    """
+    return FunctionalityCheckResponse(
+        status="ok",
+        echo=req.model_dump()
+    )
+
+#End of region 
+
+#region "Conflict Prediction"
+
+
+##conflictquery endpoint designed for c# consumption:
+#class ConflictRequest(BaseModel):
+#    #class for the request, should deserialise json
+#    place: str #Must match a place within the dataset. 
+#    country: str #Ten countries are supported: ["Central African Republic", "Ethiopia", "Sudan", "South Sudan", "Somalia", "Libya", "Kenya", "Egypt", "Uganda", "Chad"]
+#    periodStart: datetime #Officially the range 2015-01-01 to 2025-09-08 are supported, in practice since 12 periods are required then up to 2024-08-01 should be used as the maximum date. 
+#    modelType: str #Two values are supported: ["chronos2" or "lightgbm"]
+
 class ConflictRequest(BaseModel):
-    #class for the request, should deserialise json
-    place: str
-    country: str
-    periodStart: datetime
-    modelType: str #lightgbm or chronos2. 
+    place: str = Field(
+        description="Must match a place within the dataset exactly.",
+        examples=["Aduel"]
+    )
+
+    country: Literal[
+        "Central African Republic",
+        "Ethiopia",
+        "Sudan",
+        "South Sudan",
+        "Somalia",
+        "Libya",
+        "Kenya",
+        "Egypt",
+        "Uganda",
+        "Chad"
+    ] = Field(
+        description="One of the ten supported countries.",
+        examples=["South Sudan"]
+    )
+
+    periodStart: datetime = Field(
+        description=(
+            "Supported range: 2015-01-01 to 2025-09-08. "
+            "In practice, since 12 periods are required, "
+            "the maximum usable date is 2024-08-01."
+        ),
+        examples=["2020-05-01T00:00:00"]
+    )
+
+    modelType: Literal["chronos2", "lightgbm"] = Field(
+        description="Model type to use. Must be either 'chronos2' or 'lightgbm'.",
+        examples=["chronos2"]
+    )
+
+
+
+#class ConflictResponse(BaseModel):
+#    #class for the response, should serialise and deserialise properly as json. 
+#   place: str #place name from request
+#   country: str #country from request, will be one of the ten supported countries ["Central African Republic","Ethiopia", "Sudan","South Sudan","Somalia", "Libya","Kenya","Egypt", "Uganda","Chad"] 
+#   periodStart: str #will be the periodStart of the selected period (i.e. the opening point of the 28 day period the request's datetime is in. )
+#   predictions: dict[str, int] #Dictionary. Keys will be LOCAL_X, or REGIONAL_X, depending on if the prediction is local or regional, and X is the number of periods from the supplied date, up to 12. 
+#   modelVersion: str = "0.3" 
 
 class ConflictResponse(BaseModel):
-    #class for the response, should serialise and deserialise properly as json. 
-    place: str
-    country: str
-    periodStart: str
-    predictions: dict[str, int]
-    modelVersion: str = "0.2"
+    place: str = Field(
+        description="Place name from the request."
+    )
+
+    country: Literal[
+        "Central African Republic",
+        "Ethiopia",
+        "Sudan",
+        "South Sudan",
+        "Somalia",
+        "Libya",
+        "Kenya",
+        "Egypt",
+        "Uganda",
+        "Chad"
+    ] = Field(
+        description="Country from the request. Always one of the ten supported countries.",
+        examples=["Kenya"]
+    )
+
+    periodStart: str = Field(
+        description=(
+            "The opening date of the 28‑day period that contains the request's datetime. "
+            "Formatted as an ISO 8601 string."
+        ),
+        examples=["2020-05-01T00:00:00"]
+    )
+
+    predictions: dict[str, int] = Field(
+        description=(
+            "Dictionary of predictions. Keys follow the pattern LOCAL_X or REGIONAL_X, "
+            "where X is the number of periods ahead (1–12)."
+            "Values are integer predictions, where 1 is 'conflict' and 0 is 'no-conflict'"
+        ),
+        examples=[{
+            "LOCAL_1": 1,
+            "LOCAL_2": 0,
+            "REGIONAL_1": 1
+        }]
+    )
+
+    modelVersion: str = Field(
+        default="0.3",
+        description="Version of the prediction model used.",
+        examples=["0.3"]
+    )
+
 
 ##Loads the lightgbm models from disk, and returns as a dictionary, where the key is the model name, and the value is the model.  
-def load_lightGBM_models(relative_target_path: str):
+def load_lightgbm_models(relative_target_path: str):
     #Target file example: C:\Users\andre\source\repos\ConflictTracker3\ConflictTracker\ConflictCalc\Python
     #This file: "C:\Users\andre\source\repos\ConflictTracker3\ConflictTracker\ConflictQuery\ConflictQuery.py"
 
@@ -74,7 +203,7 @@ def load_lightGBM_models(relative_target_path: str):
         models[model_name] = model
 
     return models
-    #End of load_lightGBM_models()
+    #End of load_lightgbm_models()
 
 def load_chronos2_models(relative_target_path: str):
     models = {}
@@ -145,8 +274,8 @@ def chronos2_predictions(chronos2_models: dict, country: str, place: str, dt: da
     df_context, df_future = build_context_dataset(df_source = df_full_dataset, cutoffDate = dt, ids=[id] )
 
     thresholds = {}
-    thresholds["local"] = 0.0068817437
-    thresholds["regional"] = 0.0009660125
+    thresholds["LOCAL"] = 0.0068817437
+    thresholds["REGIONAL"] = 0.0009660125
 
     for model_name in chronos2_models.keys():
         model = chronos2_models[model_name]
@@ -237,9 +366,18 @@ def lightgbm_load_data(country: str, place: str, dt: datetime):
 
     return df_filtered
 
+#MCP endpoint for predicting:
+@mcp.tool()
+def conflict_query(req: ConflictRequest):
+    return conflict_query_core(req)
+
+#HTTP endpoint for predicting:
 @app.post("/conflictquery", response_model=ConflictResponse)
 def conflict_query(req: ConflictRequest):
+    return conflict_query_core(req)
 
+#this method does the actual work for predicting. 
+def conflict_query_core(req: ConflictRequest):
 
     print("API Python executable:", sys.executable)
 
@@ -257,13 +395,18 @@ def conflict_query(req: ConflictRequest):
     predictions = {}
     if (modelType != 'lightgbm' and modelType != 'chronos2'):
         raise HTTPException(status_code=400, detail = f'{req.modelType} is not a supported model type. Supported model types are lightgbm and chronos2.')
+
+    #lightgbm:
     if (modelType == 'lightgbm'):
         relative_target_path_dur = '../ConflictCalc/Python/'
-        models = load_lightGBM_models(relative_target_path_dur)
+        models = load_lightgbm_models(relative_target_path_dur)
+
+        predictions = lightgbm_predictions(models, req.country, req.place, req.periodStart)
 
         if len(models) == 0:
             raise HTTPException(status_code= 401, detail="LightGBM model was requested, but no LightGBM models have been loaded.")
 
+    #chronos2
     if (req.modelType == 'chronos2'):
         relative_target_path_dur = '../ConflictCalc/Python/'
         models = load_chronos2_models(relative_target_path_dur)
@@ -423,4 +566,6 @@ def build_context_dataset(
     )
     
     return df_context.sort_values(["id", "periodStart"]), df_future.sort_values(["id", "periodStart"])
-    #end of 
+    #end of build_context_dataset
+
+#End of region 

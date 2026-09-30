@@ -9,16 +9,17 @@ call .venv\Scripts\activate
 
 REM Install required packages
 pip install fastapi
+pip install fastmcp
 pip install "uvicorn[standard]"
 pip install pydantic
-pip install joblib
-pip install lightgbm
-pip install pandas
-pip install numpy
+pip install joblib 
+pip install lightgbm 
+pip install pandas 
+pip install numpy 
 pip install scikit-learn
-pip install fastparquet
+pip install fastparquet 
 pip install chronos-forecasting
-pip install peft
+pip install peft 
 
 echo Setup complete.
 pause

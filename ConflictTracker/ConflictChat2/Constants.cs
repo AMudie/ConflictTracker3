@@ -267,12 +267,13 @@ namespace ConflictChat2.Constants
 
             Countries:
                 -Identify the country of a named place. 
-                -Use identified places to determine the country.
-                -Examples: "Khartoum" -> "Sudan", "Kabul" -> "Afghanistan", "Mogadishu" -> "Somalia".
+                -Use identified places to determine the country. The following countries are supported: Chad, Libya, Central African Republic, Egypt, Ethiopia, Sudan, Somalia, South Sudan, Kenya, Uganda. If another country is identified, return an empty array. 
+                -Examples: "Khartoum" -> "Sudan", "Juba" -> "South Sudan", "Mogadishu" -> "Somalia".
 
             Events:
               - Match any explicit event ID if present.
               - If user refers to an event indirectly (“the bombing last week“), set event_id to null.
+              -Examples: 'SUD7471' is an event in Sudan. 'EGY6483' is an event in Egypt. 'ETH1234' is an event in Ethiopia. 
 
             Event Summary Fragements:
                 - Match to the type of event being searched for.
