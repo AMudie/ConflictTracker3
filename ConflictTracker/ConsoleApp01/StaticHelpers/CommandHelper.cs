@@ -75,14 +75,19 @@ namespace ConflictConsole.StaticHelpers
                 {
                     Console.Write("> ");
                     string resourceName = Console.ReadLine();
-                    if (resourceStrings.ContainsKey(resourceName))
+                    if (resourceStrings.ContainsKey(resourceName)|| resourceName == ".EMBEDDINGS.")
                     {
                         validResourceSelected = true;
                         Console.ForegroundColor = ConsoleColor.Green;
                         Console.WriteLine(resourceName + " is a valid resource. Loading now...");
                         Console.ResetColor();
 
-                        if (resourceStrings[resourceName].ToUpper().Contains(".ACLED."))
+                        if (resourceName == (".EMBEDDINGS."))
+                        {
+                            //special case for applying embeddings, will be slow. 
+                            CommandHelper.ApplyEmbeddingsToPlaces(kgName);
+                        }
+                        else if (resourceStrings[resourceName].ToUpper().Contains(".ACLED."))
                         {
                             CommandHelper.LoadACLEDResource(kgName, resourceStrings[resourceName]);
                         }
@@ -94,6 +99,7 @@ namespace ConflictConsole.StaticHelpers
                         {
                             CommandHelper.LoadGeoBordersResource(kgName, resourceStrings[resourceName]);
                         }
+                 
                     }
                     else
                     {
@@ -348,7 +354,28 @@ facts);
             }
         }
         #endregion
+
+        #region "Embeddings"
+
+            public static void ApplyEmbeddingsToPlaces(string kgName)
+        {
+            if (string.IsNullOrWhiteSpace(kgName))
+            {
+                throw new ArgumentException($"knowledge graph name '{kgName}' not specified.");
+            }
+
+            Neo4JHelper.ApplyEmbeddingsAsync(
+                AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_uri"),
+                AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_username"),
+                AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_password"),
+                kgName,
+                ConflictCommon.Classes.StaticHelpers.EmbeddingHelper.GenerateSingleEmbedding
+                ).Wait();
+        }
+
+        #endregion
     }
 }
+
 
 

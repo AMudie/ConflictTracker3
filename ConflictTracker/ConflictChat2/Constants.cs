@@ -14,7 +14,7 @@ namespace ConflictChat2.Constants
         /// <summary>
         /// Useful for reference. Expand as required. We may need to put relationships in between allied and opposing actors. 
         /// </summary>
-        [Obsolete]
+        [Obsolete ]
         private const string KGSchema = """
             Nodes:
             Border(location, country) //WGS-84 points on border
@@ -31,13 +31,16 @@ namespace ConflictChat2.Constants
             """;
 
         private const string ActorCentricTemplate = """
-    //ActorCentricTemplate:
+    // ActorCentricTemplate:
     // Expand user-specified places into all contained places
     MATCH (root:Place)
-    WHERE size($places) = 0 OR root.name IN $places
+    WHERE size($places) = 0
+       OR ANY(placeName IN $places WHERE toUpper(root.name) CONTAINS toUpper(placeName))
 
+    // Expand upward through the hierarchy (root + ancestors)
     MATCH (root)<-[:WITHIN*0..]-(expandedPlace:Place)
-    WHERE size($countries) = 0 OR expandedPlace.country IN $countries
+    WHERE size($countries) = 0
+       OR expandedPlace.country IN $countries
 
     WITH collect(DISTINCT expandedPlace) AS expandedPlaces,
          $actors AS actors,
@@ -48,19 +51,21 @@ namespace ConflictChat2.Constants
 
     // Match events occurring in the correct country
     MATCH (e:Event)-[:OCCURRED_AT]->(p:Place)
-    WHERE (p.country IN countries OR size(countries) = 0)
+    WHERE size(countries) = 0
+       OR p.country IN countries
 
     // Restrict events to expandedPlaces if places were specified
     AND (size(places) = 0 OR p IN expandedPlaces)
 
     // Filter events by datetime range
-    AND (datetime(e.datetime) >= datetime(startDate) AND datetime(e.datetime) <= datetime(endDate))
+    AND datetime(e.datetime) >= datetime(startDate)
+    AND datetime(e.datetime) <= datetime(endDate)
 
     // Match actors involved in those filtered events
     MATCH (a:Actor)-[:INVOLVED_IN]->(e)
     WHERE size(actors) = 0 OR a.name IN actors
 
-    RETURN DISTINCT place,
+    RETURN DISTINCT p AS place,
            collect(DISTINCT e) AS events
     
     
@@ -69,11 +74,14 @@ namespace ConflictChat2.Constants
         private const string PlaceCentricTemplate = """
     // Place centric template
     MATCH (p:Place)
-    WHERE ((p.name IN $places OR size($places) = 0)
-       AND (p.country IN $countries OR size($countries) = 0))
+    WHERE (
+        size($places) = 0 OR
+        ANY(place IN $places WHERE toUpper(p.name) CONTAINS toUpper(place))
+    )
+    AND (p.country IN $countries OR size($countries) = 0)
 
-    MATCH (child)-[:WITHIN]->(p)
-    MATCH (p)<-[:WITHIN]-(parent)
+    OPTIONAL MATCH (child)-[:WITHIN]->(p)
+    OPTIONAL MATCH (p)<-[:WITHIN]-(parent)
 
     WITH collect(DISTINCT child) +
          collect(DISTINCT parent) +
@@ -86,8 +94,8 @@ namespace ConflictChat2.Constants
     MATCH (e:Event)-[:OCCURRED_AT]->(place)
 
     // Filter events by datetime range (inclusive)
-    WHERE datetime(e.datetime) >= datetime(startDate)
-      AND datetime(e.datetime) <= datetime(endDate)
+    WHERE (datetime(e.datetime) >= datetime(startDate) OR startDate is null)
+      AND (datetime(e.datetime) <= datetime(endDate)  OR endDate  is null)
 
     RETURN DISTINCT place,
            collect(DISTINCT e) AS events
@@ -252,7 +260,7 @@ namespace ConflictChat2.Constants
             - event_centric        → Query focuses on a specific event or event type (e.g. riots, protests, battles, airstrikes, etc).
             - predictive_place     → Query asks about geographic place future risk, likelihood, trends.
             - predictive_actor     → Query asks about actor future risk, likelihood, trends, escalation between actors, etc.
-            - fallback             → Query is vague, broad, or lacks identifiable entities.
+            - fallback             → Query is vague, broad, or lacks identifiable entities, or is on a topic unrelated to armed conflict in Africa.
 
             ENTITY EXTRACTION RULES:
             Extract only entities relevant to the schema:
@@ -281,7 +289,8 @@ namespace ConflictChat2.Constants
 
             Dates / Times:
               - Extract any explicit or implicit time expressions (“last month”, “recently”, “in six months”).
-              - Convert nothing; return raw strings.
+              - return raw strings representing dates in yyyy/MM/dd format.
+              - Examples: '2024' → 2024/01/01; 'After February" → <year of next February according to current time>/02/01 
 
             OUTPUT FORMAT (strict JSON):
             {

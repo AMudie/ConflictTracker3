@@ -1,5 +1,6 @@
 ﻿using Neo4j.Driver;
 using System.Data;
+using System.Diagnostics.Metrics;
 using System.Text;
 using System.Xml.Linq;
 
@@ -212,13 +213,13 @@ namespace ConflictCommon.Classes.StaticHelpers
             {
                 endDate = new DateTime(2025, 08, 29); //hardcoded end date for testing, as ACLED data ends on 09/08/2025. 
             }
-           
+
 
             while (current <= endDate)
             {
                 var next = frequency switch
                 {
-        
+
                     "Monthly" => current.AddDays(28), //4 weeks
                     "Quarterly" => current.AddDays(3 * 28) //12 weeks.
                 };
@@ -393,7 +394,7 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                         ["longitude"] = record["longitude"].As<string>(),
                         ["minBorderDistanceKm"] = record["minBorderDistanceKm"].As<string>(),
                         ["minCapitalDistanceKm"] = record["minCapitalDistanceKm"].As<string>(),
-               
+
                         ["periodStart"] = record["periodStart"].As<string>(),
                         ["periodEnd"] = record["periodEnd"].As<string>(),
 
@@ -420,10 +421,10 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                     };
 
                     results.Add(row);
-                   
+
                 }
                 int afterLoadCount = results.Count();
-                
+
                 Console.WriteLine($"Loaded {afterLoadCount - beforeLoadCount} for {afterLoadCount} local results; period: {period.start.ToString()} to {period.end.ToString()}");
                 session.Dispose();
             }
@@ -452,7 +453,7 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
             var results = new List<Dictionary<string, string>>();
 
 
-            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, endDate:null, frequencyPeriod);
+            List<(DateTime start, DateTime end)> periods = LoadPeriods(startDate, endDate: null, frequencyPeriod);
 
 
             foreach (var period in periods)
@@ -551,14 +552,14 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                         ["name"] = record["name"].As<string>(),
                         ["country"] = record["country"].As<string>(),
                         //["minBorderDistanceKm"] = record["minBorderDistanceKm"].As<string>(),
-                       // ["minCapitalDistanceKm"] = record["minCapitalDistanceKm"].As<string>(),
+                        // ["minCapitalDistanceKm"] = record["minCapitalDistanceKm"].As<string>(),
 
                         ["periodStart"] = record["periodStart"].As<string>(),
                         ["periodEnd"] = record["periodEnd"].As<string>(),
 
 
 
-                     //   ["PlacesWithinRegion"] = Normalise(record["PlacesWithinRegion"].As<string>()),
+                        //   ["PlacesWithinRegion"] = Normalise(record["PlacesWithinRegion"].As<string>()),
                         ["RegionalEventCount"] = Normalise(record["RegionalEventCount"].As<string>()),
                         ["RegionalDistinctActorCount"] = Normalise(record["RegionalDistinctActorCount"].As<string>()),
                         ["RegionalDistinctEventTypes"] = Normalise(record["RegionalDistinctEventTypes"].As<string>()),
@@ -724,7 +725,7 @@ ORDER BY country, year, subkey;
             return raw.ToString();
         }
 
-        public  async Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string cypher, Dictionary<string, object> parameters,string kgName)
+        public async Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string cypher, Dictionary<string, object> parameters, string kgName)
         {
             await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
             var results = new List<Dictionary<string, object>>();
@@ -747,6 +748,70 @@ ORDER BY country, year, subkey;
 
             return results;
         }
+
+
+        /// <summary>
+        /// Uses cosine similarity on event summaries to find events that are similar to the user's prompt based on the provided embedding. Returns a list of event summaries that have a cosine similarity greater than 0.7 with the user's prompt embedding, ordered by similarity. The number of results returned can be limited by the optional topN parameter.
+        /// </summary>
+        /// <param name="embeddingFromUserPrompt"></param>
+        /// <param name="kgName"></param>
+        /// <param name="topN"></param>
+        /// <returns>List of string.</returns>
+        public async Task<List<string>> LoadSimilarEvents(double[] embeddingFromUserPrompt, string kgName, int topN = 10, string placeName = "", double? requiredCosineSimilarity = 0.7)
+        {
+            List<string> results = new List<string>();
+
+            try
+            {
+                await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
+
+                string cypher = @"
+                MATCH (e:Event)-[:OCCURRED_AT]->(p:Place)
+                WHERE ($placeName = '' OR toUpper(p.name) CONTAINS toUpper($placeName))
+                  AND vector.similarity.cosine(e.embedding, $userPromptEmbedding) >= $requiredCosineSimilarity
+                RETURN e.summary AS summary, 
+                    vector.similarity.cosine(e.embedding, $userPromptEmbedding) as similarity,
+                    p.name AS placeName,
+                    e.datetime AS eventDate 
+                ORDER BY vector.similarity.cosine(e.embedding, $userPromptEmbedding) DESC
+                LIMIT $topN
+            ";
+
+                Dictionary<string, object> parameters = new Dictionary<string, object>
+                {
+
+                    ["userPromptEmbedding"] = embeddingFromUserPrompt,
+                    ["placeName"] = !string.IsNullOrWhiteSpace(placeName) ? placeName : string.Empty,   //inline if, placeName or empty string
+                    ["requiredCosineSimilarity"] = requiredCosineSimilarity ?? 0.7,
+                    ["topN"] = topN
+                };
+
+                var cursor = await session.RunAsync(cypher, parameters);
+
+    
+                while (await cursor.FetchAsync())
+                {
+                    var record = cursor.Current;
+                    var row = new Dictionary<string, object>();
+
+                    foreach (var key in record.Keys)
+                    {
+                        row[key] = ConvertValue(record[key]);
+                    }
+                    results.Add($"{row["eventDate"].ToString()}: {row["summary"].ToString()} (similarity: {row["similarity"]})");
+
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine(ex.Message);
+                Console.ResetColor();
+            }
+            return results;
+        }
+
 
         #region "Conversion Methods"
         private object ConvertValue(object value)

@@ -7,6 +7,9 @@ using System.Text;
 namespace ConflictChat2.Classes
 {
 
+    /// <summary>
+    /// Helpful methods for string processing, mostly around ChatML tags.
+    /// </summary>
     internal static class StringHelper
     {
 

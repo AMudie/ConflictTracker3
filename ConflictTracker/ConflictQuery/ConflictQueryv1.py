@@ -16,6 +16,18 @@ app = FastAPI() #create the FastAPI webserver
 #fastmcp setup:
 mcp = FastMCP("conflict-query") #create the MCP Json-RPC server
 
+#split entry point, so it shoudl work for MCP And as an HTTP web server:
+if __name__ == "__main__":
+    import sys
+    if "--mcp" in sys.argv:
+        #mcp:
+        mcp.run()
+    else:
+        #http webserver (REST API):
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
 #Global Variables:
 #http path: http://localhost:8000/docs
 
@@ -368,8 +380,8 @@ def lightgbm_load_data(country: str, place: str, dt: datetime):
 
 #MCP endpoint for predicting:
 @mcp.tool()
-def conflict_query(req: ConflictRequest):
-    return conflict_query_core(req)
+def conflict_query_mcp(req: ConflictRequest):
+    return conflict_query_core(req).model_dump() 
 
 #HTTP endpoint for predicting:
 @app.post("/conflictquery", response_model=ConflictResponse)
@@ -379,8 +391,7 @@ def conflict_query(req: ConflictRequest):
 #this method does the actual work for predicting. 
 def conflict_query_core(req: ConflictRequest):
 
-    print("API Python executable:", sys.executable)
-
+    #print("API Python executable:", sys.executable)
 
     # Validate input (example)
     if not req.place or not req.country:

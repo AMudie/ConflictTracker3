@@ -230,26 +230,46 @@ namespace ConflictChat2.Classes
        .ToList());
 
 
-                    //Extract date ranges from the user prompt using NLPTimeExtractor:
-                    List<(DateTime Start, DateTime End)> dateRanges = NLPTimeExtractor.ExtractDateRanges(userPrompt);
-                    if (dateRanges.Count == 1)
+
+                    //Date inferrance from the SLM:
+                    List<string> dates = root.GetProperty("entities")
+       .GetProperty("dates")
+       .EnumerateArray()
+       .Select(x => x.GetString())
+       .ToList();
+                    if (dates.Count == 0)
                     {
-                        parameters.Add("startDate", dateRanges.First().Start);
-                        //Add a day, then subtract to get the moment before midnight. This makes life easier for consistent filtering. 
-                        parameters.Add("endDate", dateRanges.First().End.AddTicks(-1));
+                        parameters.Add("startDate", new LocalDateTime(2015, 01, 01, 0, 0, 0));
+                        parameters.Add("endDate", new LocalDateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 0, 0, 0));
+                    }
+                    else if (dates.Count == 1)
+                    {
+                        //assume start date only:
+                        DateTime sd = DateTime.Parse(dates.First());
+
+                        parameters.Add("startDate", new LocalDateTime(sd.Year, sd.Month, sd.Day, sd.Hour, sd.Minute, sd.Second) );
+                        parameters.Add("endDate", new LocalDateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 0, 0, 0));
+                    }
+                    else if (dates.Count == 2)
+                    {
+                        DateTime sd = DateTime.Parse(dates[0]);
+                        DateTime ed = DateTime.Parse(dates[1]);
+                        parameters.Add("startDate", new LocalDateTime(sd.Year, sd.Month, sd.Day, sd.Hour, sd.Minute, sd.Second));
+                        parameters.Add("endDate", new LocalDateTime(ed.Year, ed.Month, ed.Day, ed.Hour, ed.Minute, ed.Second));
                     }
                     else
                     {
-                        parameters.Add("startDate", DateTime.MinValue);
-                        parameters.Add("endDate", DateTime.Now);
+                        parameters.Add("startDate", new LocalDateTime(2015, 01, 01, 0, 0, 0));
+                        parameters.Add("endDate", new LocalDateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 0, 0, 0));
                     }
+
 
                     string predictions = "";
                     if (intent == "predictive_place")
                     {
                         if ((parameters["countries"] != null && ((List<string>)parameters["countries"]).Count == 1 &&
                 (parameters["places"] != null && ((List<string>)parameters["places"]).Count == 1) &&
-                    (parameters["startDate"] != null && ((List<string>)parameters["startDate"]).Count == 1)))
+                    (parameters["startDate"] != null )))
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine("predictive_place intent identified, making predictions (this can take a long time for chronos2 models...)");
@@ -262,22 +282,21 @@ namespace ConflictChat2.Classes
                         if (parameters["countries"] != null)
                         {
                             request.Country = ((List<string>)parameters["countries"]).FirstOrDefault();
-                            //request.Country = "South Sudan";
+
                         }
 
                         if (parameters["places"] != null)
                         {
                             request.Place = ((List<string>)parameters["places"]).FirstOrDefault();
-                            // request.Place = "Aduel";
+
                         }
 
                         if (parameters["startDate"] != null)
                         {
-                            request.PeriodStart = DateOnly.Parse(((List<string>)parameters["startDate"]).FirstOrDefault());
+                            request.PeriodStart = new DateOnly(((LocalDateTime)parameters["startDate"]).Year, ((LocalDateTime)parameters["startDate"]).Month, ((LocalDateTime)parameters["startDate"]).Day);
+
 
                         }
-
-
 
                         predictions = ConflictQueryClient.QueryConflict(baseUrl: null, request);
                     }
@@ -285,16 +304,32 @@ namespace ConflictChat2.Classes
 
 
                     //load the nodes into human (or SLM...) readable "fact" strings:
-                    List<Dictionary<string, object>> nodes = await new Neo4jQueryService(uri, username, password).ExecuteQueryAsync(template, parameters, kgName);
-                    List<string> facts = ProcessNodesToStringFacts(nodes);
-
-                    //filter facts for relevance
-                    facts = FilterMostRelevantFacts(facts);
 
 
-                    string factsPromptComponent =
-                      "Here are known facts to help with your answer:\n\n" +
-                      string.Join(Environment.NewLine, facts.Select(f => "-" + f));
+                    List<Dictionary<string, object>> nodes = new List<Dictionary<string, object>>();
+                    List<string> facts = new List<string>();
+                    if (intent != "fallback")
+                    {
+
+                        if (intent == "event_centric")
+                        {
+
+                            //Event centric queries are handled differently, as they are based on semantic similarity rather than a direct query. We generate an embedding for the user prompt and then use that to find similar events in the KG.
+                            double[] embedding = await EmbeddingHelper.GenerateSingleEmbedding(content: userPrompt);
+                            facts = await new Neo4jQueryService(uri, username, password).LoadSimilarEvents(embedding, kgName, topN: 5, placeName: ((List<string>)parameters["places"]).FirstOrDefault(), requiredCosineSimilarity: 0.3);
+                        }
+                        else
+                        {
+                            nodes = await new Neo4jQueryService(uri, username, password).ExecuteQueryAsync(template, parameters, kgName);
+
+                            //get nodes from the KG:
+                            facts = ProcessNodesToStringFacts(nodes);
+
+                            //filter facts for relevance
+                            facts = await FilterMostRelevantFacts(facts, topN: 5, userPrompt: userPrompt);
+                        }
+
+                    }
 
                     //Output the facts to console (again for debugging)
                     Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -353,6 +388,7 @@ namespace ConflictChat2.Classes
         /// </summary>
         /// <param name="facts"></param>
         /// <returns></returns>
+        [Obsolete("Use the async version instead, which offers additional parameters and better similarity matching.", error:true)]
         private List<string> FilterMostRelevantFacts(List<string> facts)
         {
             if (facts.Count < 10)
@@ -368,6 +404,38 @@ namespace ConflictChat2.Classes
             //TODO: modify so that only the most relevant facts are returned, not just the most recent ones. This will require some sort of relevance scoring, which could be done with a simple keyword match or a more complex NLP model.
 
 
+        }
+
+
+        /// <summary>
+        /// apply processing to get the most relevant facts from the KG query results using cosine simialrity. 
+        /// </summary>
+        /// <param name="facts">List of string facts</param>
+        /// <param name="topN">Number of top relevant facts to return</param>
+        /// <param name="userPrompt">The user's prompt for relevance scoring</param>
+        /// <returns></returns>
+        private async Task<List<string>> FilterMostRelevantFacts(List<string> facts, int topN, string userPrompt)
+        {
+            if (facts.Count < topN)
+            {
+                return facts;
+
+            }
+            else
+            {
+                double[] embedding = await EmbeddingHelper.GenerateSingleEmbedding(userPrompt);
+                Dictionary<string, float> similarity = new Dictionary<string, float>();
+                for (int i = 0; i < facts.Count; i++)
+                {
+                    double[] factEmbedding = await EmbeddingHelper.GenerateSingleEmbedding(facts[i]);
+                    float cosineSimilarity = (float)EmbeddingHelper.CosineSimilarity(new double[][] { embedding }, new double[][] { factEmbedding });
+                    similarity.Add(facts[i], cosineSimilarity);
+                }
+                return similarity.OrderByDescending(x => x.Value).Take(topN).Select(x => x.Key).ToList();
+
+            }
+
+ 
         }
 
         #region "Node Processing"
@@ -517,102 +585,102 @@ namespace ConflictChat2.Classes
             return null;
         }
 
-        /// <summary>
-        /// Obsolete method for deriving string facts based on a prompt. Present for reference only. 
-        /// </summary>
-        /// <param name="userPrompt"></param>
-        /// <returns></returns>
-        [Obsolete("ProduceFactsToInformResponseAsync() is deprecated and must not be used.", true)]
-        private async Task<List<string>> ProduceFactsToInformResponseAsync(string userPrompt)
-        {
-            List<(DateTime Start, DateTime End)> dateRanges = NLPTimeExtractor.ExtractDateRanges(userPrompt);
+        ///// <summary>
+        ///// Obsolete method for deriving string facts based on a prompt. Present for reference only. 
+        ///// </summary>
+        ///// <param name="userPrompt"></param>
+        ///// <returns></returns>
+        //[Obsolete("ProduceFactsToInformResponseAsync() is deprecated and must not be used.", true)]
+        //private async Task<List<string>> ProduceFactsToInformResponseAsync(string userPrompt)
+        //{
+        //    List<(DateTime Start, DateTime End)> dateRanges = NLPTimeExtractor.ExtractDateRanges(userPrompt);
 
-            Dictionary<string, (string Type, string NodeID)> namedEntities = NERHelper.IdentifyNamedEntities(userPrompt, kgName: "sudan");
+        //    Dictionary<string, (string Type, string NodeID)> namedEntities = NERHelper.IdentifyNamedEntities(userPrompt, kgName: "sudan");
 
-            Neo4jQueryService service = new Neo4jQueryService(
-                  AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_uri"),
-                    AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_username"),
-                        AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_password")
-                );
+        //    Neo4jQueryService service = new Neo4jQueryService(
+        //          AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_uri"),
+        //            AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_username"),
+        //                AppSettingsHelper.LoadAppSetting("Neo4JInstanceSettings:KG_password")
+        //        );
 
-            //Extract places within the named places:
-            List<int> placeNodeIds = new List<int>();
-            List<INode> placeNodes = new List<INode>();
-            if (namedEntities.Any(x => x.Value.Type == "Place"))
-            {
-                placeNodeIds = namedEntities.Where(x => x.Value.Type == "Place").Select(x => int.Parse(x.Value.NodeID)).ToList();
-                placeNodes = await service.ExecutePlacesWithinPlacesQueryAsync(placeNodeIds: placeNodeIds, kgName: "sudan");
+        //    //Extract places within the named places:
+        //    List<int> placeNodeIds = new List<int>();
+        //    List<INode> placeNodes = new List<INode>();
+        //    if (namedEntities.Any(x => x.Value.Type == "Place"))
+        //    {
+        //        placeNodeIds = namedEntities.Where(x => x.Value.Type == "Place").Select(x => int.Parse(x.Value.NodeID)).ToList();
+        //        placeNodes = await service.ExecutePlacesWithinPlacesQueryAsync(placeNodeIds: placeNodeIds, kgName: "sudan");
 
-            }
+        //    }
 
-            //Extract all events involving the named actor (only expected to be one node per named actor)
-            //if any place nodes are loaded, then we'll filter to only those places. 
-            List<int> actorNodeIds = new List<int>();
-            if (namedEntities.Any(x => x.Value.Type == "Actor"))
-            {
+        //    //Extract all events involving the named actor (only expected to be one node per named actor)
+        //    //if any place nodes are loaded, then we'll filter to only those places. 
+        //    List<int> actorNodeIds = new List<int>();
+        //    if (namedEntities.Any(x => x.Value.Type == "Actor"))
+        //    {
 
-                actorNodeIds = namedEntities.Where(x => x.Value.Type == "Actor").Select(x => int.Parse(x.Value.NodeID)).ToList();
-            }
-            List<long> placeNodesWithinNodes = placeNodes.Select(x => x.Id).ToList();
-            List<(INode e, INode place, INode actor)> results = await service.ExecuteEventsInvolvingActorQueryAsync(actorNodeIds: actorNodeIds, placeNodeIds: placeNodesWithinNodes, kgName: "sudan", dateRanges: dateRanges);
+        //        actorNodeIds = namedEntities.Where(x => x.Value.Type == "Actor").Select(x => int.Parse(x.Value.NodeID)).ToList();
+        //    }
+        //    List<long> placeNodesWithinNodes = placeNodes.Select(x => x.Id).ToList();
+        //    List<(INode e, INode place, INode actor)> results = await service.ExecuteEventsInvolvingActorQueryAsync(actorNodeIds: actorNodeIds, placeNodeIds: placeNodesWithinNodes, kgName: "sudan", dateRanges: dateRanges);
 
-            List<string> facts = new List<string>();
-            if (results != null)
-            {
+        //    List<string> facts = new List<string>();
+        //    if (results != null)
+        //    {
 
-                //Process actor nodes:
-                List<INode> actorNodes = results.Select(r => r.actor).Distinct().ToList();
-                foreach (INode actorNode in actorNodes)
-                {
-                    string fact = $"{actorNode.Properties["name"]} is a {actorNode.Properties["type"]}.";
-                    facts.Add(fact);
+        //        //Process actor nodes:
+        //        List<INode> actorNodes = results.Select(r => r.actor).Distinct().ToList();
+        //        foreach (INode actorNode in actorNodes)
+        //        {
+        //            string fact = $"{actorNode.Properties["name"]} is a {actorNode.Properties["type"]}.";
+        //            facts.Add(fact);
 
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"{fact}; Actor node Id: {actorNode.Id}");
-                    Console.ResetColor();
-                }
+        //            Console.ForegroundColor = ConsoleColor.Yellow;
+        //            Console.WriteLine($"{fact}; Actor node Id: {actorNode.Id}");
+        //            Console.ResetColor();
+        //        }
 
-                //Process event/place/actor node triples:
-                foreach (var result in results)
-                {
-                    List<INode> otherActors = new List<INode>();
-                    string otherActorsString = "";
-                    if (results.Any(x => x.e.ElementId == result.e.ElementId && x.actor.Id != result.actor.Id))
-                    {
-                        otherActors = results.Where(x => x.e.ElementId == result.e.ElementId && x.actor.Id != result.actor.Id).Select(x => x.actor).ToList();
-                        otherActorsString = string.Join(", ", otherActors.Select(x => x.Properties["name"].ToString()));
-                    }
+        //        //Process event/place/actor node triples:
+        //        foreach (var result in results)
+        //        {
+        //            List<INode> otherActors = new List<INode>();
+        //            string otherActorsString = "";
+        //            if (results.Any(x => x.e.ElementId == result.e.ElementId && x.actor.Id != result.actor.Id))
+        //            {
+        //                otherActors = results.Where(x => x.e.ElementId == result.e.ElementId && x.actor.Id != result.actor.Id).Select(x => x.actor).ToList();
+        //                otherActorsString = string.Join(", ", otherActors.Select(x => x.Properties["name"].ToString()));
+        //            }
 
-                    string fact = $"On {result.e.Properties["datetime"].ToString()} {result.actor.Properties["name"]} were involved in {result.e.Properties["subtype"]} in {result.place.Properties["name"]} (Source: {result.e.Properties["source"]})";
-
-
-                    if (otherActors.Count() > 0)
-                    {
-                        fact += $" Other involved groups were {otherActorsString}.";
-                    }
-
-                    if ((long)result.e.Properties["fatalities"] > 0)
-                    {
-                        fact += $" There were {result.e.Properties["fatalities"]} fatalities.";
-                    }
+        //            string fact = $"On {result.e.Properties["datetime"].ToString()} {result.actor.Properties["name"]} were involved in {result.e.Properties["subtype"]} in {result.place.Properties["name"]} (Source: {result.e.Properties["source"]})";
 
 
+        //            if (otherActors.Count() > 0)
+        //            {
+        //                fact += $" Other involved groups were {otherActorsString}.";
+        //            }
 
-                    facts.Add(fact);
-
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"{fact}; Event node Id: {result.e.Id}");
-                    Console.ResetColor();
-                }
-
-            }
+        //            if ((long)result.e.Properties["fatalities"] > 0)
+        //            {
+        //                fact += $" There were {result.e.Properties["fatalities"]} fatalities.";
+        //            }
 
 
-            await service.DisposeAsync();
 
-            return facts;
+        //            facts.Add(fact);
 
-        }
+        //            Console.ForegroundColor = ConsoleColor.Yellow;
+        //            Console.WriteLine($"{fact}; Event node Id: {result.e.Id}");
+        //            Console.ResetColor();
+        //        }
+
+        //    }
+
+
+        //    await service.DisposeAsync();
+
+        //    return facts;
+
+        //}
 
         #endregion
 

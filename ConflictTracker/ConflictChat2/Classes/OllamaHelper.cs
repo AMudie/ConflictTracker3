@@ -10,6 +10,10 @@ namespace ConflictChat2.Classes
         private static Process? _ollamaProcess;
         private static bool _startedByApp = false;
 
+        /// <summary>
+        /// Starts Ollama if not already running.
+        /// </summary>
+        /// <returns>Null</returns>
         public static async Task EnsureOllamaRunning()
         {
             if (await IsOllamaRunning())
@@ -47,6 +51,10 @@ namespace ConflictChat2.Classes
             }
         }
 
+        /// <summary>
+        /// Checks if Ollama is running by making a basic request to the model. 
+        /// </summary>
+        /// <returns>True if running, false otherwise. </returns>
         private static async Task<bool> IsOllamaRunning()
         {
             try
@@ -63,6 +71,11 @@ namespace ConflictChat2.Classes
             }
         }
 
+        /// <summary>
+        /// Supposed to shut down ollama (e.g. on application exit); not entirely convinced this is properly functional. 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
         private static void OnProcessExit(object? sender, EventArgs e)
         {
             if (_startedByApp && _ollamaProcess != null && !_ollamaProcess.HasExited)

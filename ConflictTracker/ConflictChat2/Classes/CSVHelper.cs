@@ -8,6 +8,10 @@ namespace ConflictChat2.Classes
 {
 
 
+    /// <summary>
+    /// Early attempt at NER from CSV files. Obsolete: do not use this class. Abandoned for poor performance. 
+    /// </summary>
+    //[Obsolete("ProduceFactsToInformResponseAsync() is deprecated and must not be used.", true)]
     public static class CsvHelper
     {
         public static IEnumerable<Dictionary<string, string>> ReadCsv(string pathOrResource)

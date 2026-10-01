@@ -474,7 +474,7 @@ string password, List<string> countries)
                         Console.ResetColor();
                     }
 
-               
+
                 }
 
                 // Ensure spatial index exists
@@ -702,5 +702,58 @@ List<string> countries)
                 Console.ResetColor();
             }
         }
+
+        /// <summary>
+        /// Applies embeddings to all Event nodes in the Neo4j database that are missing embeddings, using the provided embedding generator function.Note that this can take long time (1 event per second). 
+        /// </summary>
+        /// <param name="kgUri"></param>
+        /// <param name="kgUsername"></param>
+        /// <param name="kgPassword"></param>
+        /// <param name="kgName"></param>
+        /// <param name="embeddingGenerator"></param>
+        /// <returns></returns>
+        internal static async Task ApplyEmbeddingsAsync(
+            string kgUri, string kgUsername, string kgPassword, string kgName,
+            Func<string, Task<double[]>> embeddingGenerator)
+        {
+            var driver = GraphDatabase.Driver(kgUri, AuthTokens.Basic(kgUsername, kgPassword));
+            await using var session = driver.AsyncSession(o => o.WithDatabase(kgName));
+
+            //load all Event nodes missing embeddings
+            string loadCypher = @"
+        MATCH (e:Event)
+        WHERE e.embedding IS NULL
+        RETURN id(e) AS eventNodeId, e.summary AS summary
+    ";
+
+            var loadResult = await session.RunAsync(loadCypher);
+
+            var events = new List<(long id, string summary)>();
+
+            await loadResult.ForEachAsync(record =>
+            {
+                long id = record["eventNodeId"].As<long>();
+                string summary = record["summary"].As<string>();
+                events.Add((id, summary));
+            });
+
+            //compute and save embeddings
+            foreach (var (id, summary) in events)
+            {
+                double[] embedding = await embeddingGenerator(summary);
+
+                string saveCypher = @"
+            MATCH (e:Event)
+            WHERE id(e) = $id
+            SET e.embedding = $embedding
+        ";
+
+                await session.RunAsync(saveCypher, new { id, embedding });
+            }
+
+            Console.WriteLine($"Applied embeddings to {events.Count} Event nodes.");
+        }
+
+
     }
 }

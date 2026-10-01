@@ -14,12 +14,10 @@ namespace ConflictChat2.Classes
 
     /// <summary>
     /// </summary>
-    /// <remarks>AI Generated code; Copilot; Prompt: "Break down the steps for time extraction from the user's prompt into C#  methods and wrap in an static class"</remarks>
+    /// <remarks>AI Generated code; Copilot; Prompt: "Break down the steps for time extraction from the user's prompt into C#  methods and wrap in an static class." Uses Microsoft's Recognizers.DateTime library for this, but note it introduces a vulnerability. Note that this code needs to be improved upon. </remarks>
 
     public static class NLPTimeExtractor
     {
-
-
 
         public static List<(DateTime Start, DateTime End)> ExtractDateRanges(string text)
         {

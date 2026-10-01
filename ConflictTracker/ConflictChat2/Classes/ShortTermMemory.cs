@@ -4,6 +4,9 @@ using System.Text;
 
 namespace ConflictChat2.Classes
 {
+    /// <summary>
+    /// Exists to allow the model to maintain conversation context between messages. Note that two memories actually exist, one is the "true" (immutable) conversation history and one is subject to summarisation at a particular number of entries, which is used to help performance as the chat goes on.
+    /// </summary>
     public class ShortTermMemory
     {
         private readonly int _maxMessages;
@@ -16,32 +19,6 @@ namespace ConflictChat2.Classes
         {
             _maxMessages = maxMessages;
         }
-
-        ///// <summary>
-        ///// Adds the provided message to the short-term memory. The method checks if the new message is different from the last message in memory to prevent repetition. If the new message is not a repeat, it is added to the list of messages. After adding, the method ensures that the total number of messages does not exceed the specified maximum by removing the oldest messages if necessary. This helps maintain a relevant and concise conversation history for the language model to reference when generating responses.
-        ///// </summary>
-        ///// <param name="role"></param>
-        ///// <param name="content"></param>
-        ///// <remarks>Prevents adding a message if the message already exists in the memory to stop the modell getting confused. Make sure the user's initial prompt is never added to the memory; adding the assistant reponse to the memory is encouraged.</remarks>
-        //public void Add(string role, string content)
-        //{
-
-        //    if (_immutableMemories.Count == 0 || _immutableMemories.Last().content != content)
-        //    {
-
-        //        _immutableMemories.Add((role, content));
-
-        //        //only add to the memory if not repeating the last message. This is to prevent the memory from being filled with repeated messages, which can happen with some models when they get stuck in a loop.
-        //        _truncatableMemories.Add((role, content, false));
-
-
-        //    }
-
-
-        //    // Trim oldest messages
-        //    if (_truncatableMemories.Count > _maxMessages)
-        //        _truncatableMemories.RemoveAt(0);
-        //}
 
         public async Task AddAsync(string role, string content, LLMClient llm)
         {
@@ -126,21 +103,21 @@ namespace ConflictChat2.Classes
         }
 
 
-        public string GetMemoryAsString()
-        {
-            string memory = string.Empty;
-            foreach (var (role, content, isSummary) in _truncatableMemories)
-            {
-                if (isSummary)
-                {
-                    memory += $"[Summary]: {content}{Environment.NewLine}";
-                }
-                else
-                {
-                    memory += $"{role}: {content}{Environment.NewLine}";
-                }
-            }
-            return memory.Trim();
-        }
+        //public string GetMemoryAsString()
+        //{
+        //    string memory = string.Empty;
+        //    foreach (var (role, content, isSummary) in _truncatableMemories)
+        //    {
+        //        if (isSummary)
+        //        {
+        //            memory += $"[Summary]: {content}{Environment.NewLine}";
+        //        }
+        //        else
+        //        {
+        //            memory += $"{role}: {content}{Environment.NewLine}";
+        //        }
+        //    }
+        //    return memory.Trim();
+        //}
     }
 }
