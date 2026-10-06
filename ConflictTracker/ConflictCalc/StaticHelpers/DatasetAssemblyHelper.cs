@@ -94,7 +94,7 @@ namespace ConflictCalc.StaticHelpers
                     Console.WriteLine($"Dataset of {datasetBase.Count} records built successfully for place: {placeName} starting from {startDateString} with frequency: {freqPeriod}.");
                     Console.ResetColor();
 
-                    List<Dictionary<string, string>> datasetRegional = service.BuildBaseRegionalDatasetAsync(kgName, placeName, startDateTime, freqPeriod.ToString()).Result;
+                    List<Dictionary<string, string>> datasetRegional = service.BuildBaseRegionalDatasetAsync(kgName, placeName,  startDateTime, freqPeriod.ToString()).Result;
 
                     MergeRegionalIntoLocalIntoDataset(ref datasetBase, ref datasetRegional);
 

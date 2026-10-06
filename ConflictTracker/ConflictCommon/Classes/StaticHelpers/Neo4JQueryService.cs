@@ -242,7 +242,7 @@ namespace ConflictCommon.Classes.StaticHelpers
         /// <remarks> Local events are defined based on places. The local events for place X are all the places OCCURRED_AT place X, plus events near to that place (10KM). That second part uses the event's location to the place, not any OCCURRED_AT place's location. Note also that some places are currently included which have 0 events. This does not automatically make them peaceful places, these are likely admin3-admin1 level places for which events are coded at a lower level.  </remarks>
         public async Task<List<Dictionary<string, string>>> BuildBaseLocalDatasetAsync(
     string kgName,
-    string? placeName,
+    string placeName,
     DateTime startDate,
     string frequencyPeriod)
         {
@@ -267,110 +267,168 @@ namespace ConflictCommon.Classes.StaticHelpers
                 };
 
                 string cypher = @"
-with
+WITH
+  $radiusKm AS radiusKM, 
+  $periodStart AS periodStart, 
+  $periodEnd AS periodEnd,
+  $placeName AS placeName
 
-$radiusKm as radiusKM, 
-$periodStart as periodStart, 
-$periodEnd as periodEnd,
-$placeName as placeName
+// Root places
+MATCH (rootPlace:Place)
+WHERE ((rootPlace.name = placeName OR placeName = '' OR placeName IS NULL) AND rootPlace.name <> rootPlace.country)
 
-//start with places as the root, just for the country and name
-match (rootPlace:Place)
-where (rootPlace.name = placeName or placeName = '' or placeName is null)
+// Events at the root place
+OPTIONAL MATCH (rootPlace)<-[:OCCURRED_AT]-(rootEvent:Event)
+WHERE rootEvent.datetime >= periodStart AND rootEvent.datetime < periodEnd
 
-//Get events that OCCURRED_AT those places, within the period
-with rootPlace, periodStart, periodEnd, radiusKM
-Optional match (rootPlace)<-[:OCCURRED_AT]-(rootEvent:Event)
-where rootEvent.datetime >= periodStart and rootEvent.datetime < periodEnd
+WITH rootPlace, radiusKM, periodStart, periodEnd,
+     collect(elementId(rootEvent)) AS rootEventIds
 
+// Nearby events
+OPTIONAL MATCH (nearbyEvents:Event)
+WHERE nearbyEvents.datetime >= periodStart
+  AND nearbyEvents.datetime < periodEnd
+  AND point.distance(nearbyEvents.location, rootPlace.location) < radiusKM * 1000
+  AND NOT elementId(nearbyEvents) IN rootEventIds
 
-//Disregard those event nodes, and just carry forward the collection of event Ids 
-with rootEvent, rootPlace, radiusKM, periodStart, periodEnd, collect (elementid(rootEvent)) as rootEventIds
-with rootPlace, radiusKM, periodStart, periodEnd, collect (elementid(rootEvent)) as rootEventIds
-Optional MATCH (rootEvents:Event)
-where elementId(rootEvents) in rootEventIds
+WITH rootPlace, radiusKM, periodStart, periodEnd,
+     rootEventIds,
+     collect(elementId(nearbyEvents)) AS nearbyEventIds
 
+// Combine and dedupe
+//WITH rootPlace, radiusKM, periodStart, periodEnd,
+//     coll.distinct(rootEventIds + nearbyEventIds) AS allEventIds
 
-//Get events nearby those events (10KM)
-optional match (nearbyEvents:Event)
-where nearbyEvents.datetime >= periodStart and nearbyEvents.datetime < periodEnd
-and point.distance(nearbyEvents.location, rootEvents.location) < radiusKM * 1000
-and (elementid(nearbyEvents) in rootEventIds = FALSE)
-with rootPlace, radiusKM, periodStart, periodEnd, rootEventIds, collect(elementid(nearbyEvents)) as nearbyEventIds
+WITH rootPlace, radiusKM, periodStart, periodEnd, rootEventIds, nearbyEventIds,
+     reduce(acc = [], x IN rootEventIds + nearbyEventIds |
+       CASE WHEN x IN acc THEN acc ELSE acc + x END
+     ) AS allEventIds
 
+// Load local events
+OPTIONAL MATCH (localEvents:Event)
+WHERE elementId(localEvents) IN allEventIds
 
-//We now have two collections of event Ids in rootEventIds and nearbyEventIds. 
-//Need to unwind then collect distinct to remove duplicates to avoid double counting. 
+// Load actors per event
+OPTIONAL MATCH (actor:Actor)-[:INVOLVED_IN]->(localEvents)
 
-//Now we can load the local events as nodes, and begin querying. 
-with 
-rootPlace, radiusKM, periodStart, periodEnd,  rootEventIds, nearbyEventIds, coll.distinct(rootEventIds + nearbyEventIds) as allEventIds
-optional MATCH(localEvents:Event)
-where elementId(localEvents) in allEventIds 
+// Build per-event actor list
+WITH rootPlace, periodStart, periodEnd,
+     localEvents,
+     collect(actor) AS actorsForEvent
 
-//now load the actors associated with those events
-with rootPlace, radiusKM, periodStart, periodEnd,  rootEventIds, nearbyEventIds, allEventIds, localEvents
-Optional match (localActors:Actor)-[:INVOLVED_IN]->(localEvents)
+// Build raw event → actor map
+WITH rootPlace, periodStart, periodEnd,
+     collect({event: localEvents, actors: actorsForEvent}) AS rawEventActorMap
 
-//Distinct the actors:
-with  rootPlace, periodStart, periodEnd, rootEventIds, nearbyEventIds, allEventIds, localEvents, collect(distinct localActors) as localActors
+// Remove null-event entries so places with no events have an empty list
+WITH rootPlace, periodStart, periodEnd, 
+     [e IN rawEventActorMap WHERE e.event IS NOT NULL] AS eventActorMap
 
+// Flatten actors
+WITH rootPlace, periodStart, periodEnd, eventActorMap,
+     reduce(acc = [], entry IN eventActorMap | acc + entry.actors) AS allActorsFlat
 
+// Distinct actors via manual dedupe
+WITH rootPlace, periodStart, periodEnd, eventActorMap, allActorsFlat,
+     reduce(acc = [], x IN allActorsFlat |
+       CASE WHEN x IN acc THEN acc ELSE acc + x END
+     ) AS distinctActors
 
-with
-rootPlace, periodStart, periodEnd, 
-count(localEvents) as LocalEventCount,
-count(localActors) AS LocalDistinctActorCount,
-count(DISTINCT localEvents.type) AS LocalDistinctEventTypes,
-count(DISTINCT localEvents.subtype) AS LocalDistinctEventSubtypes,
-sum(localEvents.fatalities) AS LocalTotalFatalities,
-    CASE 
-        WHEN count(localEvents.severity) = 0 THEN NULL
-       ELSE sum(localEvents.severity) * 1.0 / count(localEvents.severity)
-    END AS LocalAvgSeverity,
-Sum(CASE 
-  WHEN ANY(a IN localActors WHERE a.type = ""Protesters"") 
-  THEN 1 
-  ELSE 0 
-END)AS LocalProtestersEventCount,
-Sum(CASE 
-  WHEN ANY(a IN localActors WHERE a.type = ""State forces"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalStateForcesEventCount,
-Sum(CASE
-  WHEN ANY(a IN localActors WHERE a.type = ""Political militia"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalPoliticalMilitiaEventCount,
-Sum(CASE 
-  WHEN ANY(a IN localActors WHERE a.type = ""Identity militia"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalIdentityMilitiaEventCount,
-Sum(CASE
-  WHEN ANY(a IN localActors WHERE a.type = ""Rebel group"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalRebelGroupEventCount,
-Sum(CASE
-  WHEN ANY(a IN localActors WHERE a.type = ""Rioters"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalRiotersEventCount,
-Sum(CASE
-  WHEN ANY(a IN localActors WHERE a.type = ""Civilians"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalCiviliansEventCount,
-Sum(CASE
-  WHEN ANY(a IN localActors WHERE a.type = ""External/Other forces"") 
-  THEN 1 
-  ELSE 0 
-END) AS LocalOtherTypeEventCount
+// Distinct event types/subtypes via manual dedupe
+WITH rootPlace, periodStart, periodEnd, eventActorMap, distinctActors,
+     reduce(acc = [], entry IN eventActorMap |
+       CASE WHEN entry.event.type IN acc THEN acc ELSE acc + entry.event.type END
+     ) AS eventTypes,
+     reduce(acc = [], entry IN eventActorMap |
+       CASE WHEN entry.event.subtype IN acc THEN acc ELSE acc + entry.event.subtype END
+     ) AS eventSubtypes
 
-//return with aliases:
-return rootPlace.country as country, rootPlace.name as name, rootPlace.location.latitude as latitude, rootPlace.location.longitude as longitude, rootPlace.minBorderDistanceKm as minBorderDistanceKm, rootPlace.minCapitalDistanceKm as minCapitalDistanceKm, periodStart, periodEnd, LocalEventCount, LocalDistinctEventTypes, LocalDistinctEventSubtypes, LocalTotalFatalities, LocalDistinctActorCount, LocalAvgSeverity, LocalProtestersEventCount, LocalStateForcesEventCount, LocalPoliticalMilitiaEventCount,LocalIdentityMilitiaEventCount, LocalRebelGroupEventCount, LocalRiotersEventCount, LocalCiviliansEventCount, LocalOtherTypeEventCount
+// Compute aggregates
+WITH rootPlace, periodStart, periodEnd, eventActorMap, distinctActors, eventTypes, eventSubtypes,
+
+     size(eventActorMap) AS LocalEventCount,
+     size(distinctActors) AS LocalDistinctActorCount,
+     size(eventTypes) AS LocalDistinctEventTypes,
+     size(eventSubtypes) AS LocalDistinctEventSubtypes,
+
+     reduce(total = 0, entry IN eventActorMap |
+       total + coalesce(entry.event.fatalities, 0)
+     ) AS LocalTotalFatalities,
+
+     [entry IN eventActorMap WHERE entry.event.severity IS NOT NULL | entry.event.severity] AS severityList,
+
+     // Actor-type event counts (max 1 per event per type)
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Protesters"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalProtestersEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""State forces"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalStateForcesEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Political militia"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalPoliticalMilitiaEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Identity militia"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalIdentityMilitiaEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Rebel group"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalRebelGroupEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Rioters"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalRiotersEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Civilians"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalCiviliansEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""External/Other forces"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS LocalOtherTypeEventCount
+
+RETURN 
+  rootPlace.country AS country,
+  rootPlace.name AS name,
+  rootPlace.location.latitude AS latitude,
+  rootPlace.location.longitude AS longitude,
+  rootPlace.minBorderDistanceKm AS minBorderDistanceKm,
+  rootPlace.minCapitalDistanceKm AS minCapitalDistanceKm,
+  periodStart,
+  periodEnd,
+  LocalEventCount,
+  LocalDistinctEventTypes,
+  LocalDistinctEventSubtypes,
+  LocalTotalFatalities,
+  LocalDistinctActorCount,
+  CASE WHEN size(severityList) = 0
+       THEN NULL
+       ELSE reduce(s = 0, v IN severityList | s + v) * 1.0 / size(severityList)
+  END AS LocalMeanSeverity,
+  CASE WHEN size(severityList) = 0
+     THEN NULL
+     ELSE reduce(m = severityList[0], v IN severityList |
+                 CASE WHEN v > m THEN v ELSE m END)
+   END AS LocalMaxSeverity,
+  LocalProtestersEventCount,
+  LocalStateForcesEventCount,
+  LocalPoliticalMilitiaEventCount,
+  LocalIdentityMilitiaEventCount,
+  LocalRebelGroupEventCount,
+  LocalRiotersEventCount,
+  LocalCiviliansEventCount,
+  LocalOtherTypeEventCount;
 
 ";
 
@@ -403,7 +461,8 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                         ["LocalDistinctEventTypes"] = Normalise(record["LocalDistinctEventTypes"].As<string>()),
                         ["LocalDistinctEventSubtypes"] = Normalise(record["LocalDistinctEventSubtypes"].As<string>()),
                         ["LocalTotalFatalities"] = Normalise(record["LocalTotalFatalities"].As<string>()),
-                        ["LocalAvgSeverity"] = Normalise(record["LocalAvgSeverity"].As<string>()),
+                        ["LocalMeanSeverity"] = Normalise(record["LocalMeanSeverity"].As<string>()),
+                        ["LocalMaxSeverity"] = Normalise(record["LocalMaxSeverity"].As<string>()),
 
                         ["LocalProtestersEventCount"] = Normalise(record["LocalProtestersEventCount"].As<string>()),
                         ["LocalStateForcesEventCount"] = Normalise(record["LocalStateForcesEventCount"].As<string>()),
@@ -413,10 +472,6 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                         ["LocalRiotersEventCount"] = Normalise(record["LocalRiotersEventCount"].As<string>()),
                         ["LocalCiviliansEventCount"] = Normalise(record["LocalCiviliansEventCount"].As<string>()),
                         ["LocalOtherTypeEventCount"] = Normalise(record["LocalOtherTypeEventCount"].As<string>()),
-
-
-
-
 
                     };
 
@@ -445,7 +500,7 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
         /// <remarks>CRITICAL: When training for classical ML, you MUST remove places within the place being trained for as the dataset will include these and is not aware of Place-WITHIN-PLACE relationships. Note also that Regional... features exlude the local features, and local features will include the WITHIN places. </remarks>
         public async Task<List<Dictionary<string, string>>> BuildBaseRegionalDatasetAsync(
     string kgName,
-    string? placeName,
+    string placeName,
     DateTime startDate,
     string frequencyPeriod)
         {
@@ -465,73 +520,151 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                     ["periodStart"] = new LocalDateTime(period.start),//startDateStr,
                     ["periodEnd"] = new LocalDateTime(period.end),
                     ["placeName"] = string.Empty,
-                    ["radiusKm"] = 50 // Convert 50 km to meters for Neo4j distance function
+                    ["radiusKm"] = 150 // Convert 50 km to meters for Neo4j distance function
+            
                 };
 
                 string cypher = @"
 
-with
+WITH
+  $radiusKm AS radiusKM, 
+  $periodStart AS periodStart, 
+  $periodEnd AS periodEnd,
+  $placeName AS placeName
 
-$radiusKm as radiusKM, 
-$periodStart as periodStart, 
-$periodEnd as periodEnd,
-$placeName as placeName
+// Root places
+MATCH (rootPlace:Place)
+WHERE ((rootPlace.name = placeName OR placeName = '' OR placeName IS NULL) AND rootPlace.name <> rootPlace.country)
 
-//start with places as the root, just for the country and name
-match (rootPlace:Place)
-where (rootPlace.name = placeName or placeName = '' or placeName is null)
+// Regional events: 10–50 km from place
+OPTIONAL MATCH (regionalEvents:Event)
+WHERE regionalEvents.datetime >= periodStart
+  AND regionalEvents.datetime < periodEnd
+  AND point.distance(regionalEvents.location, rootPlace.location) >= 10000
+  AND point.distance(regionalEvents.location, rootPlace.location) < radiusKM * 1000
 
-//Get events that OCCURRED_AT those places, within the period
-with rootPlace, periodStart, periodEnd, radiusKM
-Optional match (rootPlace)<-[:OCCURRED_AT]-(regionalEvents:Event)
-where 
-(
-regionalEvents is null 
-or ((regionalEvents.datetime >= periodStart 
-and regionalEvents.datetime < periodEnd)
-and (point.distance(regionalEvents.location, rootPlace.location) >= 10000 
-and 
-point.distance(regionalEvents.location, rootPlace.location) < radiusKM * 1000))
-)
+// Load actors per event
+OPTIONAL MATCH (regionalActors:Actor)-[:INVOLVED_IN]->(regionalEvents)
 
+// Build per-event actor list
+WITH rootPlace, periodStart, periodEnd,
+     regionalEvents,
+     collect(regionalActors) AS actorsForEvent
 
+// Build event→actor map
+WITH rootPlace, periodStart, periodEnd,
+     collect({
+       event: regionalEvents,
+       actors: actorsForEvent
+     }) AS rawEventActorMap
 
-//now load the regional actors for those events. 
-with rootPlace, periodStart, periodEnd, radiusKM, regionalEvents
-optional match  (regionalActors:Actor)-[:INVOLVED_IN]->(regionalEvents)
+// Remove null-event entries
+WITH rootPlace, periodStart, periodEnd,
+     [e IN rawEventActorMap WHERE e.event IS NOT NULL] AS eventActorMap
 
-with rootPlace, periodStart, periodEnd, radiusKM, collect(distinct regionalEvents) as regionalEvents, collect(distinct regionalActors) as regionalActors
+// Flatten actors
+WITH rootPlace, periodStart, periodEnd, eventActorMap,
+     reduce(acc = [], entry IN eventActorMap | acc + entry.actors) AS allActorsFlat
 
-with rootPlace, periodStart, periodEnd, radiusKM, regionalEvents, regionalActors
+// Distinct actors
+WITH rootPlace, periodStart, periodEnd, eventActorMap, allActorsFlat,
+     reduce(acc = [], x IN allActorsFlat |
+       CASE WHEN x IN acc THEN acc ELSE acc + x END
+     ) AS distinctActors
 
-with rootPlace, periodStart, periodEnd,  collect(distinct regionalEvents) as regionalEvents, regionalActors,
-size(regionalEvents) as RegionalEventCount,
-size(regionalActors) AS RegionalDistinctActorCount,
-size(coll.distinct([e IN regionalEvents | e.type]))AS RegionalDistinctEventTypes,
-size(coll.distinct([e IN regionalEvents | e.subtype])) AS RegionalDistinctEventSubTypes,
-reduce(total = 0, e IN regionalEvents | total + coalesce(e.fatalities, 0))
-    AS RegionalTotalFatalities,
-CASE 
-    WHEN size([e IN regionalEvents WHERE e.severity IS NOT NULL]) = 0 THEN 0
-    ELSE reduce(total = 0, e IN regionalEvents | total + coalesce(e.severity, 0)) * 1.0 /
-         size([e IN regionalEvents WHERE e.severity IS NOT NULL])
-END AS RegionalAvgSeverity,
-size([a IN regionalActors WHERE a.type = ""Protesters""]) AS RegionalProtestersEventCount,
-size([a IN regionalActors WHERE a.type = ""State forces""]) AS RegionalStateForcesEventCount,
-size([a IN regionalActors WHERE a.type = ""Political militia""]) AS RegionalPoliticalMilitiaEventCount,
-size([a IN regionalActors WHERE a.type = ""Identity militia""]) AS RegionalIdentityMilitiaEventCount,
-size([a IN regionalActors WHERE a.type = ""Rebel group""]) AS RegionalRebelGroupEventCount,
-size([a IN regionalActors WHERE a.type = ""Rioters""]) AS RegionalRiotersEventCount,
-size([a IN regionalActors WHERE a.type = ""Civilians""]) AS RegionalCiviliansEventCount,
-size([a IN regionalActors WHERE a.type = ""External/Other forces""]) AS RegionalOtherTypeEventCount
+// Distinct event types/subtypes
+WITH rootPlace, periodStart, periodEnd, eventActorMap, distinctActors,
+     reduce(acc = [], entry IN eventActorMap |
+       CASE WHEN entry.event.type IN acc THEN acc ELSE acc + entry.event.type END
+     ) AS eventTypes,
+     reduce(acc = [], entry IN eventActorMap |
+       CASE WHEN entry.event.subtype IN acc THEN acc ELSE acc + entry.event.subtype END
+     ) AS eventSubtypes
 
+// Compute aggregates
+WITH rootPlace, periodStart, periodEnd, eventActorMap, distinctActors, eventTypes, eventSubtypes,
 
-//return with aliases:
-return rootPlace.country as country, rootPlace.name as name, rootPlace.location.latitude as latitude, rootPlace.location.longitude as longitude, periodStart, periodEnd, RegionalEventCount, RegionalDistinctEventTypes, RegionalDistinctEventSubTypes, RegionalTotalFatalities, RegionalDistinctActorCount, RegionalAvgSeverity, RegionalProtestersEventCount, RegionalStateForcesEventCount, RegionalPoliticalMilitiaEventCount,RegionalIdentityMilitiaEventCount, RegionalRebelGroupEventCount, RegionalRiotersEventCount, RegionalCiviliansEventCount, RegionalOtherTypeEventCount
+     size(eventActorMap) AS RegionalEventCount,
+     size(distinctActors) AS RegionalDistinctActorCount,
+     size(eventTypes) AS RegionalDistinctEventTypes,
+     size(eventSubtypes) AS RegionalDistinctEventSubTypes,
 
+     reduce(total = 0, entry IN eventActorMap |
+       total + coalesce(entry.event.fatalities, 0)
+     ) AS RegionalTotalFatalities,
 
+     [entry IN eventActorMap WHERE entry.event.severity IS NOT NULL | entry.event.severity] AS severityList,
 
+     // Actor-type event counts (max 1 per event per type)
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Protesters"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalProtestersEventCount,
 
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""State forces"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalStateForcesEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Political militia"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalPoliticalMilitiaEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Identity militia"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalIdentityMilitiaEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Rebel group"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalRebelGroupEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Rioters"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalRiotersEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""Civilians"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalCiviliansEventCount,
+
+     reduce(cnt = 0, entry IN eventActorMap |
+       CASE WHEN ANY(a IN entry.actors WHERE a.type = ""External/Other forces"")
+            THEN cnt + 1 ELSE cnt END
+     ) AS RegionalOtherTypeEventCount
+
+RETURN
+  rootPlace.country AS country,
+  rootPlace.name AS name,
+  rootPlace.location.latitude AS latitude,
+  rootPlace.location.longitude AS longitude,
+  periodStart,
+  periodEnd,
+  RegionalEventCount,
+  RegionalDistinctEventTypes,
+  RegionalDistinctEventSubTypes,
+  RegionalTotalFatalities,
+  RegionalDistinctActorCount,
+  CASE WHEN size(severityList) = 0
+       THEN NULL
+       ELSE reduce(s = 0, v IN severityList | s + v) * 1.0 / size(severityList)
+  END AS RegionalMeanSeverity,
+CASE WHEN size(severityList) = 0
+     THEN NULL
+     ELSE reduce(m = severityList[0], v IN severityList |
+                 CASE WHEN v > m THEN v ELSE m END)
+END AS RegionalMaxSeverity,
+  RegionalProtestersEventCount,
+  RegionalStateForcesEventCount,
+  RegionalPoliticalMilitiaEventCount,
+  RegionalIdentityMilitiaEventCount,
+  RegionalRebelGroupEventCount,
+  RegionalRiotersEventCount,
+  RegionalCiviliansEventCount,
+  RegionalOtherTypeEventCount;
 
                 ";
 
@@ -557,17 +690,14 @@ return rootPlace.country as country, rootPlace.name as name, rootPlace.location.
                         ["periodStart"] = record["periodStart"].As<string>(),
                         ["periodEnd"] = record["periodEnd"].As<string>(),
 
-
-
-                        //   ["PlacesWithinRegion"] = Normalise(record["PlacesWithinRegion"].As<string>()),
                         ["RegionalEventCount"] = Normalise(record["RegionalEventCount"].As<string>()),
                         ["RegionalDistinctActorCount"] = Normalise(record["RegionalDistinctActorCount"].As<string>()),
                         ["RegionalDistinctEventTypes"] = Normalise(record["RegionalDistinctEventTypes"].As<string>()),
                         ["RegionalDistinctEventSubTypes"] = Normalise(record["RegionalDistinctEventSubTypes"].As<string>()),
                         ["RegionalTotalFatalities"] = Normalise(record["RegionalTotalFatalities"].As<string>()),
-                        ["RegionalAvgSeverity"] = Normalise(record["RegionalAvgSeverity"].As<string>()),
-                        // ["RegionalDaysSinceLastEvent"] = Normalise(record["RegionalDaysSinceLastEvent"].As<string>())
-
+                        ["RegionalMeanSeverity"] = Normalise(record["RegionalMeanSeverity"].As<string>()),
+                        ["RegionalMaxSeverity"] = Normalise(record["RegionalMaxSeverity"].As<string>()),
+                       
                         ["RegionalProtestersEventCount"] = Normalise(record["RegionalProtestersEventCount"].As<string>()),
                         ["RegionalStateForcesEventCount"] = Normalise(record["RegionalStateForcesEventCount"].As<string>()),
                         ["RegionalPoliticalMilitiaEventCount"] = Normalise(record["RegionalPoliticalMilitiaEventCount"].As<string>()),
