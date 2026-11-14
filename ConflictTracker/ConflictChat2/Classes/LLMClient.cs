@@ -11,6 +11,7 @@ using System.Net.Http.Json;
 using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
+using System.Runtime.CompilerServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -121,31 +122,31 @@ namespace ConflictChat2.Classes
         /// <param name="userPrompt">User's basic string input</param>
         /// <returns></returns>
         /// <exception cref="InvalidOperationException"></exception>
+        //<process>
+        //1.User Query
+        //    ↓
+        //2.LLM: Intent + Entity Extraction
+        //    ↓
+        //3.LLM: Intent Classification
+        //    ↓
+        //4.LLM: JSON Query Plan
+        //    ↓
+        //5.Backend: Cypher Template Assembly
+        //    ↓
+        //6.Backend: Cypher Validation
+        //    ↓
+        //7.Neo4j: Execute Query
+        //    ↓
+        //8.Backend: Relevance Filtering
+        //    ↓
+        //9.LLM: Analysis + Prediction
+        //    ↓
+        //10.Short - term Memory Update
+        //    ↓
+        //11.Final Answer to User
+        //</process>
         public async Task<string> AskModelKGRAG(string kgName, string uri, string username, string password, string userPrompt)
         {
-
-            //1.User Query
-            //    ↓
-            //2.LLM: Intent + Entity Extraction
-            //    ↓
-            //3.LLM: Intent Classification
-            //    ↓
-            //4.LLM: JSON Query Plan
-            //    ↓
-            //5.Backend: Cypher Template Assembly
-            //    ↓
-            //6.Backend: Cypher Validation
-            //    ↓
-            //7.Neo4j: Execute Query
-            //    ↓
-            //8.Backend: Relevance Filtering
-            //    ↓
-            //9.LLM: Analysis + Prediction
-            //    ↓
-            //10.Short - term Memory Update
-            //    ↓
-            //11.Final Answer to User
-
 
             //add the user's query to the STM:
             await _shortTermMemory.AddAsync("user", userPrompt, this);
@@ -247,7 +248,7 @@ namespace ConflictChat2.Classes
                         //assume start date only:
                         DateTime sd = DateTime.Parse(dates.First());
 
-                        parameters.Add("startDate", new LocalDateTime(sd.Year, sd.Month, sd.Day, sd.Hour, sd.Minute, sd.Second) );
+                        parameters.Add("startDate", new LocalDateTime(sd.Year, sd.Month, sd.Day, sd.Hour, sd.Minute, sd.Second));
                         parameters.Add("endDate", new LocalDateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, 0, 0, 0));
                     }
                     else if (dates.Count == 2)
@@ -269,7 +270,7 @@ namespace ConflictChat2.Classes
                     {
                         if ((parameters["countries"] != null && ((List<string>)parameters["countries"]).Count == 1 &&
                 (parameters["places"] != null && ((List<string>)parameters["places"]).Count == 1) &&
-                    (parameters["startDate"] != null )))
+                    (parameters["startDate"] != null)))
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine("predictive_place intent identified, making predictions (this can take a long time for chronos2 models...)");
@@ -384,27 +385,108 @@ namespace ConflictChat2.Classes
         }
 
         /// <summary>
-        /// apply processing to get the most relevant facts from the KG query results. Currently this just returns the last 10 facts, but in future it could be modified to use a relevance scoring system to return the most relevant facts instead of just the most recent ones.
+        /// Generates predictions for KG-RAG enabled SLM predictions. 
         /// </summary>
-        /// <param name="facts"></param>
-        /// <returns></returns>
-        [Obsolete("Use the async version instead, which offers additional parameters and better similarity matching.", error:true)]
-        private List<string> FilterMostRelevantFacts(List<string> facts)
+        /// <param name="kgName"></param>
+        /// <param name="uri"></param>
+        /// <param name="username"></param>
+        /// <param name="password"></param>
+        /// <returns>string: the model's response</returns>
+        /// <remarks>/GenerateSLMPredictions</remarks>
+        /// <exception cref="InvalidOperationException"></exception>
+        public async Task<string> AskModelForSLMPrediction(string prompt, string kgName, string uri, string username, string password, string placeName, string countryName, DateTime startDate, DateTime endDate)
         {
-            if (facts.Count < 10)
+
+            int tryCount = 0;
+            while (tryCount < 3)
             {
-                return facts;
+                try
+                {
 
+                    const int distanceKM = 10;
+
+                    List<string> facts = new List<string>();
+
+                    //Load recent events
+                    List<string> factsRecent = (await new ConflictCommon.Classes.StaticHelpers.Neo4jQueryService(uri, username, password).LoadFactsForSLMPrediction_RecentEvents(kgName, distanceKM, countryName, placeName, startDate, endDate));
+                    if (factsRecent.Count > 0)
+                    {
+                        factsRecent.Insert(0, $"{Environment.NewLine}Recent events within {distanceKM} kilometers of {placeName}:");
+                        facts.AddRange(factsRecent);
+                    }
+
+                    //Load high severity/fatality events
+                    List<string> factsHighSeverity = (await new ConflictCommon.Classes.StaticHelpers.Neo4jQueryService(uri, username, password).LoadFactsForSLMPrediction_HighSeverityFatalitiesEvents(kgName, distanceKM, countryName, placeName, startDate, endDate));
+                    if (factsHighSeverity.Count > 0)
+                    {
+                        factsHighSeverity.Insert(0, $"{Environment.NewLine}Recent events with high severity (a scale 0 (min) to 5 (max)) or high numbers of fatalities within {distanceKM} kilometers of {placeName}:");
+                        facts.AddRange(factsHighSeverity);
+                    }
+
+                    //Load actor activity
+                    List<string> factsActorActivity = (await new ConflictCommon.Classes.StaticHelpers.Neo4jQueryService(uri, username, password).LoadFactsForSLMPrediction_ActorsLastActive(kgName, distanceKM, countryName, placeName, startDate, endDate));
+                    if (factsActorActivity.Count > 0)
+                    {
+                        factsActorActivity.Insert(0, $"{Environment.NewLine}Recent activity of groups within {distanceKM} kilometers of {placeName}:");
+                        facts.AddRange(factsActorActivity);
+                    }
+
+                    if (facts.Count() == 0)
+                    {
+                        facts.Add($"There are no instances of past conflict events in the local region (within 10KM) since {startDate}.");
+                    }
+
+     
+
+
+                    if (facts.Count > 0)
+                    {
+                        facts = facts.Distinct().ToList(); //remove duplicates
+
+                        //process the provided prompt to include the facts loaded:
+                        prompt += $"{Environment.NewLine} Known past events to inform your response follow:";
+                        prompt += Environment.NewLine;
+                        prompt += string.Join(Environment.NewLine, facts);
+                    }
+
+                    //Write the prompt
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.WriteLine(prompt);
+                    Console.ResetColor();
+
+                    //Debug.WriteLine(prompt);
+                    //Make the request to the model:
+                    var response = await _http.PostAsJsonAsync("/api/generate", new
+                    {
+                        model = _modelName,
+                        prompt = prompt,
+                        stream = false
+                    });
+
+                    var json = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+                    var reply = json?["response"]?.ToString() ?? "";
+
+
+                    if (string.IsNullOrWhiteSpace(reply))
+                    {
+                        throw new InvalidOperationException("Model's response is blank.");
+                    }
+                    else
+                    {
+                        return reply;
+                    }
+
+                }
+                catch (Exception ex)
+                {
+                    tryCount += 1;
+                }
             }
-            else
-            {
-                return facts.TakeLast(10).ToList();
-            }
-
-            //TODO: modify so that only the most relevant facts are returned, not just the most recent ones. This will require some sort of relevance scoring, which could be done with a simple keyword match or a more complex NLP model.
-
-
+            return "Error";
         }
+
+
+
 
 
         /// <summary>
@@ -435,7 +517,7 @@ namespace ConflictChat2.Classes
 
             }
 
- 
+
         }
 
         #region "Node Processing"
@@ -684,17 +766,24 @@ namespace ConflictChat2.Classes
 
         #endregion
 
-        public async Task<string> AskModelRaw(string userPrompt)
+        public async Task<string> AskModelRaw(string userPrompt, bool addToMemory = true)
         {
-
-            await _shortTermMemory.AddAsync("user", userPrompt, this);
-
+            if (addToMemory) //do not add if in command mode. 
+            {
+                await _shortTermMemory.AddAsync("user", userPrompt, this);
+            }
 
             // List<string> factsFromKG = ProduceFactsToInformResponseAsync(userPrompt).Result;
             List<string> factsFromKG = null;
-            string prompt = BuildPrompt(false, factsFromKG);
-
-
+            string prompt = "";
+            if (addToMemory)
+            {
+                prompt = BuildPrompt(false, factsFromKG);
+            }
+            else
+            {
+                prompt = userPrompt;
+            }
 
             //Make the request to the model:
             var response = await _http.PostAsJsonAsync("/api/generate", new

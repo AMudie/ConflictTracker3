@@ -3,6 +3,7 @@ using System.Data;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Xml.Linq;
+using static System.Collections.Specialized.BitVector32;
 
 namespace ConflictCommon.Classes.StaticHelpers
 {
@@ -21,6 +22,194 @@ namespace ConflictCommon.Classes.StaticHelpers
         {
             await _driver.DisposeAsync();
         }
+
+        #region "SLM Prediction methods"
+
+        public async Task<List<string>> LoadFactsForSLMPrediction_RecentEvents(string kgName, int distanceKM, string country, string placeName, DateTime startDate, DateTime endDate)
+        {
+            List<string> returnValue = new List<string>();
+            var parameters = new Dictionary<string, object>
+            {
+                ["country"] = country,
+                ["place_name"] = placeName,
+                ["event_end_date"] = new LocalDateTime(endDate),
+                ["event_start_date"] = new LocalDateTime(startDate),
+                ["distance"] = distanceKM * 1000 // Convert km to meters
+            };
+
+            //events query (distance = 50km):
+            const string eventQuery = @"
+MATCH (p:Place)
+WHERE p.name = $place_name
+  AND p.country = $country
+
+MATCH (e:Event)
+WHERE point.distance(e.location, p.location) <= $distance
+  AND e.datetime >= $event_start_date
+  AND e.datetime <= $event_end_date
+OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]-(e)
+
+WITH
+    p,
+    e,
+    collect(DISTINCT a.name + ' (actor type: ' + a.type + ')') AS actors
+
+RETURN
+    p.country,
+    p.name,
+    e.fatalities,
+    e.severity,
+    e.summary,
+    e.type,
+    e.civilianTargetting,
+    reduce(s = '', actor IN actors |
+        CASE
+            WHEN s = '' THEN actor
+            ELSE s + ', ' + actor
+        END
+    ) AS InvolvedActors
+
+ORDER BY e.datetime DESC
+LIMIT 15
+            ";
+            await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
+            var cursor = await session.RunAsync(eventQuery, parameters);
+
+            while (await cursor.FetchAsync())
+            {
+                var record = cursor.Current;
+
+
+                var type = record["e.type"];
+                var summary = record["e.summary"];
+                var involvedActors = record["InvolvedActors"];
+
+                returnValue.Add($"•{type}:  {summary} Actors involved in this event: {involvedActors}");
+                // throw new NotImplementedException("LoadFactsForSLMPrediction not implemented");
+            }
+            return returnValue;
+            ;
+        }
+
+        public async Task<List<string>> LoadFactsForSLMPrediction_HighSeverityFatalitiesEvents(string kgName, int distanceKM, string country, string placeName, DateTime startDate, DateTime endDate)
+        {
+            List<string> returnValue = new List<string>();
+            var parameters = new Dictionary<string, object>
+            {
+                ["country"] = country,
+                ["place_name"] = placeName,
+                ["event_end_date"] = new LocalDateTime(endDate),
+                ["event_start_date"] = new LocalDateTime(startDate),
+                ["distance"] = distanceKM * 1000 // Convert km to meters
+            };
+
+            //events query (distance = 50km):
+            const string eventQuery = @"
+MATCH (p:Place)
+WHERE p.name = $place_name
+  AND p.country = $country
+
+MATCH (e:Event)
+WHERE point.distance(e.location, p.location) <= $distance
+  AND e.datetime >= $event_start_date
+  AND e.datetime <= $event_end_date
+  and (e.severity >= 3 or e.fatalities >= 3)
+OPTIONAL MATCH (a:Actor)-[:INVOLVED_IN]-(e)
+
+WITH
+    p,
+    e,
+    collect(DISTINCT a.name + ' (actor type: ' + a.type + ')') AS actors
+
+RETURN
+    p.country,
+    p.name,
+    e.fatalities,
+    e.severity,
+    e.summary,
+    e.type,
+    e.civilianTargetting,
+    reduce(s = '', actor IN actors |
+        CASE
+            WHEN s = '' THEN actor
+            ELSE s + ', ' + actor
+        END
+    ) AS InvolvedActors
+
+ORDER BY e.severity DESC, e.datetime DESC
+LIMIT 15
+            ";
+            await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
+            var cursor = await session.RunAsync(eventQuery, parameters);
+
+            while (await cursor.FetchAsync())
+            {
+                var record = cursor.Current;
+
+
+                var type = record["e.type"];
+                var summary = record["e.summary"];
+                var involvedActors = record["InvolvedActors"];
+
+                returnValue.Add($"•{type}:  {summary} Actors involved in this event: {involvedActors}");
+            }
+            return returnValue;
+            ;
+        }
+
+        public async Task<List<string>> LoadFactsForSLMPrediction_ActorsLastActive(string kgName, int distanceKM, string country, string placeName, DateTime startDate, DateTime endDate)
+        {
+            List<string> returnValue = new List<string>();
+            var parameters = new Dictionary<string, object>
+            {
+                ["country"] = country,
+                ["place_name"] = placeName,
+                ["event_end_date"] = new LocalDateTime(endDate),
+                ["event_start_date"] = new LocalDateTime(startDate),
+                ["distance"] = distanceKM * 1000 // Convert km to meters
+            };
+
+            const string actorsQuery = @"
+MATCH (p:Place)
+WHERE p.name = $place_name
+  AND p.country = $country
+
+MATCH (e:Event)
+WHERE point.distance(e.location, p.location) <= $distance
+  AND e.datetime >= $event_start_date
+  AND e.datetime <= $event_end_date
+
+MATCH (a:Actor)-[:INVOLVED_IN]->(e)
+
+//maybe restrict down to only militas, armed forces, etc
+WITH a, max(e.datetime) AS LastActivity
+RETURN
+    a.name,
+    a.type,
+    LastActivity
+ORDER BY LastActivity DESC
+
+LIMIT 15
+            ";
+            await using var session = _driver.AsyncSession(o => o.WithDatabase(kgName));
+            var cursor = await session.RunAsync(actorsQuery, parameters);
+
+            while (await cursor.FetchAsync())
+            {
+                var record = cursor.Current;
+
+
+                var name = record["a.name"];
+                var type = record["a.type"];
+                var lastActivity = record["LastActivity"];
+
+                returnValue.Add($"•Name: {name}, Type: {type}, Last Activity: {lastActivity}");
+            }
+            return returnValue;
+            ;
+        }
+
+        #endregion
 
         public async Task<List<(INode e, INode p, INode a)>> ExecuteEventsInvolvingActorQueryAsync(List<int> actorNodeIds, List<long> placeNodeIds, string kgName, List<(DateTime Start, DateTime End)>? dateRanges = null)
         {
@@ -521,7 +710,7 @@ RETURN
                     ["periodEnd"] = new LocalDateTime(period.end),
                     ["placeName"] = string.Empty,
                     ["radiusKm"] = 150 // Convert 50 km to meters for Neo4j distance function
-            
+
                 };
 
                 string cypher = @"
@@ -697,7 +886,7 @@ END AS RegionalMaxSeverity,
                         ["RegionalTotalFatalities"] = Normalise(record["RegionalTotalFatalities"].As<string>()),
                         ["RegionalMeanSeverity"] = Normalise(record["RegionalMeanSeverity"].As<string>()),
                         ["RegionalMaxSeverity"] = Normalise(record["RegionalMaxSeverity"].As<string>()),
-                       
+
                         ["RegionalProtestersEventCount"] = Normalise(record["RegionalProtestersEventCount"].As<string>()),
                         ["RegionalStateForcesEventCount"] = Normalise(record["RegionalStateForcesEventCount"].As<string>()),
                         ["RegionalPoliticalMilitiaEventCount"] = Normalise(record["RegionalPoliticalMilitiaEventCount"].As<string>()),
@@ -918,7 +1107,7 @@ ORDER BY country, year, subkey;
 
                 var cursor = await session.RunAsync(cypher, parameters);
 
-    
+
                 while (await cursor.FetchAsync())
                 {
                     var record = cursor.Current;
